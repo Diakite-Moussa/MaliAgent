@@ -1,4 +1,8 @@
-from fastapi import FastAPI
+from app.core.asyncio_compat import use_selector_event_loop_on_windows
+
+use_selector_event_loop_on_windows()
+
+from fastapi import FastAPI  # noqa: E402
 
 app = FastAPI(title="MaliAgent", version="0.1.0")
 

@@ -29,9 +29,9 @@ from app.llm.factory import get_llm_provider  # noqa: E402
 # --- Tools factices, juste pour valider le comportement du modèle ---
 
 FAKE_PRODUCTS = {
-    "samsung a15": {"price": 95000, "stock": 4},
-    "iphone 13": {"price": 350000, "stock": 0},
-    "riz 25kg": {"price": 18000, "stock": 50},
+    "samsung a15": {"price": 95000, "stock": 4, "category": "téléphone"},
+    "iphone 13": {"price": 350000, "stock": 0, "category": "téléphone"},
+    "riz 25kg": {"price": 18000, "stock": 50, "category": "alimentation"},
 }
 
 TOOLS = [
@@ -63,7 +63,13 @@ SYSTEM_PROMPT = (
     "Tu es l'assistant WhatsApp d'un commerçant malien. "
     "Utilise toujours les tools disponibles pour répondre aux questions sur "
     "les produits, les prix ou le stock — ne réponds jamais de mémoire sur "
-    "ces sujets. Réponds en français, de façon brève et naturelle."
+    "ces sujets. Réponds en français, de façon brève et naturelle. "
+    "Si une recherche de produit ne donne aucun résultat, tu peux réessayer "
+    "UNE SEULE FOIS avec une requête différente (plus large ou plus précise). "
+    "Si le deuxième essai ne donne rien non plus, arrête de chercher et "
+    "annonce honnêtement au client que tu n'as pas trouvé de produit "
+    "correspondant, puis propose-lui autre chose (voir le catalogue, "
+    "préciser sa demande, parler à un conseiller)."
 )
 
 # --- Messages de test représentatifs ---
@@ -81,8 +87,15 @@ def fake_tool_result(name: str, arguments: dict) -> str:
     """Simule l'exécution d'un tool (pas de vraie DB à ce stade)."""
     if name == "search_products":
         query = arguments.get("query", "").lower()
-        matches = {k: v for k, v in FAKE_PRODUCTS.items() if query in k or k in query}
-        return str(matches) if matches else "Aucun produit trouvé."
+        query_words = query.split()
+        matches = {
+            k: v
+            for k, v in FAKE_PRODUCTS.items()
+            if query in k
+            or k in query
+            or any(w in v["category"] or v["category"] in w for w in query_words)
+        }
+        return str(matches) if matches else "Aucun produit trouvé pour cette recherche."
     if name == "check_stock":
         product = arguments.get("product_name", "").lower()
         info = FAKE_PRODUCTS.get(product)
@@ -96,27 +109,35 @@ async def run_test(message_text: str, provider) -> dict:
         Message(role="user", content=message_text),
     ]
 
+    all_tool_calls: list[tuple[str, dict]] = []
     response = await provider.chat(messages, tools=TOOLS)
 
-    called_tools = [tc.name for tc in response.tool_calls]
-
-    result = {
-        "message": message_text,
-        "tool_calls": [(tc.name, tc.arguments) for tc in response.tool_calls],
-        "content": response.content,
-    }
-
-    # Si des tools ont été appelés, on simule leur exécution et on relance
-    # le modèle avec les résultats, pour voir la réponse finale.
-    if response.tool_calls:
+    # Boucle agentique : le modèle peut demander plusieurs tools à la
+    # suite (ex: une recherche échoue, il réessaie avec une autre requête)
+    # avant de donner sa réponse finale. On boucle jusqu'à ce qu'il n'y ait
+    # plus de tool_calls, avec un plafond de sécurité pour éviter une
+    # boucle infinie si le modèle déraille.
+    max_rounds = 5
+    rounds = 0
+    while response.tool_calls and rounds < max_rounds:
+        rounds += 1
         messages.append(Message(role="assistant", content=response.content or ""))
         for tc in response.tool_calls:
+            all_tool_calls.append((tc.name, tc.arguments))
             tool_result = fake_tool_result(tc.name, tc.arguments)
             messages.append(
                 Message(role="tool", content=tool_result, tool_call_id=tc.id, name=tc.name)
             )
-        final = await provider.chat(messages, tools=TOOLS)
-        result["final_answer"] = final.content
+        response = await provider.chat(messages, tools=TOOLS)
+
+    result = {
+        "message": message_text,
+        "tool_calls": all_tool_calls,
+        "rounds": rounds,
+        "final_answer": response.content,
+    }
+    if all_tool_calls and not response.content:
+        result["final_raw_debug"] = response.raw
 
     return result
 
@@ -139,9 +160,14 @@ async def main():
         if result["tool_calls"]:
             for name, args in result["tool_calls"]:
                 print(f"  Tool appelé: {name}({args})")
-            print(f"  Réponse finale: {result.get('final_answer')}\n")
+            if result["rounds"] > 1:
+                print(f"  ({result['rounds']} aller-retours avec les tools)")
+            print(f"  Réponse finale: {result.get('final_answer')}")
+            if result.get("final_raw_debug"):
+                print(f"  [DEBUG] réponse brute (content vide): {result['final_raw_debug']}")
+            print()
         else:
-            print(f"  Aucun tool appelé. Réponse directe: {result['content']}\n")
+            print(f"  Aucun tool appelé. Réponse directe: {result['final_answer']}\n")
 
         results.append(result)
 
