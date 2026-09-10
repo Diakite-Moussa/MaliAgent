@@ -1,0 +1,10 @@
+Mali Agent
+Sprint	Contenu	Statut
+1 (S1-2)	Squelette + validation tool calling + modèles DB	✅ terminé
+2 (S3-4)	WhatsApp (webhook)	← on y est
+3 (S5-6)	Tools de lecture (search_products, check_stock) réels	à venir
+4 (S7-8)	Tools d'écriture (create_order, calculate_delivery)	à venir
+5 (S9-10)	Facturation PDF	à venir
+6 (S11-12)	Dashboard Angular	à venir
+7 (S13-14)	Pilotes réels + itération	à venir
+8 (S15-16)	Stabilisation	à venir

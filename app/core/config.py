@@ -20,5 +20,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "https://ollama.com"
     ollama_model: str = "gpt-oss:120b-cloud"
 
+    #meta
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_verify_token: str = ""
+
 
 settings = Settings()
