@@ -62,6 +62,20 @@ export interface Product {
   is_out_of_stock: boolean;
 }
 
+export interface PaymentItem {
+  id: string;
+  order_id: string;
+  transaction_reference: string;
+  provider: string;
+  status: string;
+  amount: number;
+  currency: string;
+  customer_phone: string | null;
+  checkout_url: string | null;
+  paid_at: string | null;
+  created_at: string;
+}
+
 // ================= TYPES SUPER ADMIN PLATEFORME =================
 
 export interface PlatformStats {
@@ -210,7 +224,7 @@ export class App implements OnInit, OnDestroy {
   auditFilterAction = signal<string>('');
 
   // Navigation Commerçant
-  activeTab = signal<'overview' | 'orders' | 'products' | 'deliveries' | 'support'>('overview');
+  activeTab = signal<'overview' | 'orders' | 'products' | 'deliveries' | 'payments' | 'support'>('overview');
 
   // Formulaire de connexion
   loginEmail = signal<string>('admin@maliagent.ml');
@@ -402,6 +416,48 @@ export class App implements OnInit, OnDestroy {
       pending: list.filter((m) => m.status === 'pending').length,
       in_transit: list.filter((m) => m.status === 'in_transit' || m.status === 'picked_up' || m.status === 'assigned').length,
       delivered: list.filter((m) => m.status === 'delivered').length,
+    };
+  });
+
+  // ================= DONNÉES PAIEMENTS (V2.1) =================
+  payments = signal<PaymentItem[]>([]);
+  paymentStatusFilter = signal<string>('all');
+  paymentProviderFilter = signal<string>('all');
+  paymentSearchQuery = signal<string>('');
+
+  filteredPayments = computed(() => {
+    let list = this.payments();
+    const sFilter = this.paymentStatusFilter();
+    const pFilter = this.paymentProviderFilter();
+    const query = this.paymentSearchQuery().toLowerCase().trim();
+
+    if (sFilter !== 'all') {
+      list = list.filter((p) => p.status === sFilter);
+    }
+    if (pFilter !== 'all') {
+      list = list.filter((p) => p.provider.toLowerCase().includes(pFilter.toLowerCase()));
+    }
+    if (query) {
+      list = list.filter(
+        (p) =>
+          p.transaction_reference.toLowerCase().includes(query) ||
+          p.order_id.toLowerCase().includes(query) ||
+          (p.customer_phone && p.customer_phone.includes(query))
+      );
+    }
+    return list;
+  });
+
+  paymentKpis = computed(() => {
+    const list = this.payments();
+    const successPayments = list.filter((p) => p.status === 'success');
+    const totalCollected = successPayments.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+    return {
+      total: list.length,
+      success_count: successPayments.length,
+      pending_count: list.filter((p) => p.status === 'pending_validation' || p.status === 'initiated').length,
+      failed_count: list.filter((p) => p.status === 'failed' || p.status === 'expired').length,
+      total_collected: totalCollected,
     };
   });
 
@@ -701,6 +757,7 @@ export class App implements OnInit, OnDestroy {
     this.loadProducts();
     this.loadHandoffs();
     this.loadMerchantDeliveries();
+    this.loadPayments();
   }
 
   loadStats() {
@@ -830,6 +887,38 @@ export class App implements OnInit, OnDestroy {
     setTimeout(() => {
       this.toastMessage.set(null);
     }, 3500);
+  }
+
+  loadPayments() {
+    this.http.get<PaymentItem[]>(`${this.apiUrl}/api/payments?limit=50`).subscribe({
+      next: (data) => {
+        this.payments.set(data || []);
+      },
+      error: () => {},
+    });
+  }
+
+  simulatePayment(payment: PaymentItem, outcome: 'success' | 'failed') {
+    this.http
+      .post(`${this.apiUrl}/api/payments/simulate-webhook`, {
+        transaction_reference: payment.transaction_reference,
+        outcome: outcome,
+      })
+      .subscribe({
+        next: () => {
+          this.showToast(
+            outcome === 'success'
+              ? `Simulation : Paiement ${payment.transaction_reference} validé avec succès !`
+              : `Simulation : Transaction ${payment.transaction_reference} rejetée.`
+          );
+          this.loadPayments();
+          this.loadOrders();
+          this.loadStats();
+        },
+        error: (err) => {
+          this.showToast(err.error?.detail || 'Erreur lors de la simulation');
+        },
+      });
   }
 
   formatFcfa(val: number | null | undefined): string {

@@ -37,9 +37,28 @@ class Settings(BaseSettings):
     # CORS (origines autorisées pour le dashboard commerçant)
     cors_origins: str = "http://localhost:4300,http://127.0.0.1:4300"
 
+    # Paiements Mobile Money (V2.1 - Phase 1: simulation, Phase 2: production)
+    payment_provider: str = "mock"  # "mock", "wave", "orange_money"
+    payment_mode: str = "simulation"  # "simulation", "production"
+
+    # Wave Mali (Réservé Phase 2 - Production)
+    wave_api_key: str = ""
+    wave_api_url: str = "https://api.wave.com/v1/checkout/sessions"
+    wave_webhook_secret: str = ""
+
+    # Orange Money Mali (Réservé Phase 2 - Production)
+    orange_client_id: str = ""
+    orange_client_secret: str = ""
+    orange_api_url: str = "https://api.orange.com/orange-money-webpay/dev/v1"
+    orange_webhook_secret: str = ""
+
     @property
     def allowed_cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def is_payment_simulation(self) -> bool:
+        return self.payment_mode.lower() == "simulation" or self.payment_provider.lower() == "mock"
 
 
 settings = Settings()

@@ -187,4 +187,45 @@ TOOLS = [
             },
         },
     ),
+    ToolDefinition(
+        name="initiate_payment",
+        description=(
+            "Initie une demande de règlement par Mobile Money (Wave ou Orange Money) ou enregistre un paiement en espèces pour une commande. "
+            "Utilise ce tool dès que le client indique comment il souhaite régler (ex: 'je veux payer par Wave', 'envoyez-moi le lien Wave', 'je paie par Orange Money', 'je préfère payer cash')."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "description": "Opérateur de paiement choisi : 'wave' pour Wave, 'orange_money' pour Orange Money, 'cash' pour paiement à la livraison.",
+                },
+                "customer_phone": {
+                    "type": "string",
+                    "description": "Numéro de téléphone du compte Mobile Money (ex: '76123456' ou '+22376123456'). Optionnel.",
+                },
+                "order_ref": {
+                    "type": "string",
+                    "description": "Référence de la commande (#...). Si omis, cible automatiquement la dernière commande en attente.",
+                },
+            },
+            "required": ["provider"],
+        },
+    ),
+    ToolDefinition(
+        name="check_payment_status",
+        description=(
+            "Vérifie si le paiement d'une commande a été reçu et validé. "
+            "Utilise ce tool si le client demande si son virement ou son paiement Mobile Money a été pris en compte."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "order_ref": {
+                    "type": "string",
+                    "description": "Référence de la commande (#...). Optionnel.",
+                },
+            },
+        },
+    ),
 ]

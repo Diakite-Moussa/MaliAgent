@@ -14,6 +14,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.delivery import router as delivery_router
 from app.api.invoices import router as invoices_router
 from app.api.orders import router as orders_router
+from app.api.payments import router as payments_router
 from app.api.platform import router as platform_router
 from app.api.products import router as products_router
 from app.core.config import settings
@@ -96,3 +97,4 @@ app.include_router(dashboard_router)
 app.include_router(orders_router)
 app.include_router(products_router)
 app.include_router(delivery_router)
+app.include_router(payments_router)

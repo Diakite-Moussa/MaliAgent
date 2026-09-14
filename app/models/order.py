@@ -9,14 +9,21 @@ modifie ses prix après coup. C'est une règle de facturation classique :
 la facture doit refléter le prix au moment de l'achat, pas le prix actuel.
 """
 
+from __future__ import annotations
+
 import enum
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, BusinessScopedMixin, TimestampMixin, UUIDPKMixin
+
+if TYPE_CHECKING:
+    from app.models.customer import Customer
+    from app.models.payment import Payment
 
 
 class OrderStatus(str, enum.Enum):
@@ -32,6 +39,7 @@ class Order(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     customer_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False, index=True
     )
+    customer: Mapped[Customer] = relationship("Customer", lazy="selectin")
 
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus, name="order_status"), nullable=False, default=OrderStatus.PENDING
@@ -42,8 +50,17 @@ class Order(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     delivery_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     delivery_fee: Mapped[Numeric] = mapped_column(Numeric(12, 2), nullable=False, default=0)
 
-    items: Mapped[list["OrderItem"]] = relationship(
+    # Statut et méthode de paiement (V2.1)
+    # payment_status: 'unpaid', 'pending', 'paid', 'refunded'
+    payment_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unpaid")
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    items: Mapped[list[OrderItem]] = relationship(
         back_populates="order", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+    payments: Mapped[list[Payment]] = relationship(
+        "Payment", back_populates="order", cascade="all, delete-orphan", lazy="selectin"
     )
 
 

@@ -28,6 +28,7 @@ from app.models import (
     OrderStatus,
     Product,
 )
+from app.payments.service import payment_service
 from app.services.invoice_generator import generate_invoice_pdf
 
 
@@ -97,6 +98,22 @@ async def execute_tool(
             business_id,
             customer_id,
             arguments.get("new_zone", ""),
+            arguments.get("order_ref"),
+        )
+    if tool_name == "initiate_payment":
+        return await _initiate_payment(
+            session,
+            business_id,
+            customer_id,
+            arguments.get("provider", "mock"),
+            arguments.get("customer_phone"),
+            arguments.get("order_ref"),
+        )
+    if tool_name == "check_payment_status":
+        return await _check_payment_status(
+            session,
+            business_id,
+            customer_id,
             arguments.get("order_ref"),
         )
     return f"Tool inconnu : {tool_name}"
@@ -181,15 +198,16 @@ async def _calculate_delivery(session: AsyncSession, business_id: uuid.UUID, zon
             matched = z
             break
         if z.keywords:
-            keywords_list = [kw.strip().lower() for kw in z.keywords.split(",") if kw.strip()]
-            if any(kw in zone_clean or zone_clean in kw for kw in keywords_list):
+            clean_kw_str = z.keywords.replace("{", "").replace("}", "").replace('"', '')
+            keywords_list = [kw.strip().lower() for kw in clean_kw_str.split(",") if kw.strip()]
+            if any(kw == zone_clean or kw in zone_clean or zone_clean in kw for kw in keywords_list):
                 matched = z
                 break
 
     if matched:
         fee_int = int(matched.fee)
         time_str = f" (Délai estimé : {matched.estimated_time})" if matched.estimated_time else ""
-        return f"Frais de livraison pour {matched.name} : {fee_int} FCFA{time_str}."
+        return f"Oui, nous livrons à '{zone}'. Frais de livraison : {fee_int} FCFA{time_str} (Zone : {matched.name})."
 
     zones_list = "\n".join(
         f"- {z.name} : {int(z.fee)} FCFA ({z.estimated_time or 'délai standard'})" for z in zones
@@ -658,3 +676,134 @@ async def _update_order_address(
         f"- Frais de livraison : {fee_fmt} FCFA\n"
         f"- Nouveau total de la commande : {total_fmt} FCFA.{inv_str}"
     )
+
+
+async def _initiate_payment(
+    session: AsyncSession,
+    business_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    provider: str = "mock",
+    customer_phone: str | None = None,
+    order_ref: str | None = None,
+) -> str:
+    """Initie un paiement Mobile Money (Wave, Orange Money ou Espèces) pour la commande."""
+    stmt = (
+        select(Order)
+        .where(Order.business_id == business_id, Order.customer_id == customer_id)
+        .order_by(Order.created_at.desc())
+        .options(selectinload(Order.items), selectinload(Order.customer))
+    )
+    res = await session.execute(stmt)
+    orders = res.scalars().all()
+
+    target_order = None
+    if order_ref:
+        clean_ref = order_ref.strip().lstrip("#").upper()
+        for o in orders:
+            if str(o.id).upper().startswith(clean_ref):
+                target_order = o
+                break
+    else:
+        # Prendre la dernière commande non annulée et non livrée
+        for o in orders:
+            if o.status not in (OrderStatus.CANCELLED, OrderStatus.DELIVERED):
+                target_order = o
+                break
+
+    if not target_order:
+        return "Aucune commande en cours trouvée pour initier un paiement."
+
+    order_short = str(target_order.id)[:8].upper()
+    total_fmt = f"{int(target_order.total_amount):,}".replace(",", " ")
+
+    # Cas 1 : Paiement en espèces à la livraison
+    p_lower = (provider or "cash").lower()
+    if p_lower in ("cash", "especes", "espèces", "cash_on_delivery", "livraison"):
+        target_order.payment_method = "cash_on_delivery"
+        target_order.payment_status = "unpaid"
+        await session.commit()
+        return (
+            f"Votre commande #{order_short} ({total_fmt} FCFA) sera réglée en **espèces à la livraison** directement auprès du coursier.\n"
+            f"Veuillez prévoir le montant exact si possible. Merci !"
+        )
+
+    # Cas 2 : Paiement Mobile Money via PaymentService
+    try:
+        payment = await payment_service.initiate_payment(
+            session=session,
+            business_id=business_id,
+            order_id=target_order.id,
+            provider=provider,
+            customer_phone=customer_phone,
+        )
+
+        if "wave" in payment.provider.lower():
+            return (
+                f"Voici votre lien sécurisé pour régler la commande #{order_short} ({total_fmt} FCFA) via **Wave** :\n"
+                f"👉 {payment.checkout_url}\n\n"
+                f"Cliquez sur le lien pour valider directement dans votre application Wave.\n"
+                f"Dès validation, votre commande sera automatiquement confirmée !"
+            )
+        elif "orange" in payment.provider.lower():
+            phone_str = payment.customer_phone or "votre téléphone"
+            return (
+                f"Une demande de paiement **Orange Money** de {total_fmt} FCFA a été initiée pour la commande #{order_short} "
+                f"vers le numéro {phone_str}.\n"
+                f"📱 Vous pouvez également valider votre paiement directement via ce lien sécurisé :\n"
+                f"👉 {payment.checkout_url}\n\n"
+                f"Réf transaction : `{payment.transaction_reference}`."
+            )
+        else:
+            return (
+                f"Session de paiement initiée pour la commande #{order_short} ({total_fmt} FCFA).\n"
+                f"Lien de règlement : {payment.checkout_url}"
+            )
+    except Exception as exc:
+        return f"Impossible d'initier le paiement pour la commande #{order_short} : {str(exc)}"
+
+
+async def _check_payment_status(
+    session: AsyncSession,
+    business_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    order_ref: str | None = None,
+) -> str:
+    """Vérifie l'état d'encaissement de la commande."""
+    stmt = (
+        select(Order)
+        .where(Order.business_id == business_id, Order.customer_id == customer_id)
+        .order_by(Order.created_at.desc())
+        .options(selectinload(Order.items), selectinload(Order.payments))
+    )
+    res = await session.execute(stmt)
+    orders = res.scalars().all()
+
+    target_order = None
+    if order_ref:
+        clean_ref = order_ref.strip().lstrip("#").upper()
+        for o in orders:
+            if str(o.id).upper().startswith(clean_ref):
+                target_order = o
+                break
+    else:
+        for o in orders:
+            if o.status != OrderStatus.CANCELLED:
+                target_order = o
+                break
+
+    if not target_order:
+        return "Aucune commande correspondante trouvée."
+
+    order_short = str(target_order.id)[:8].upper()
+    total_fmt = f"{int(target_order.total_amount):,}".replace(",", " ")
+
+    if target_order.payment_status == "paid":
+        method = target_order.payment_method or "Mobile Money"
+        return f"✅ Votre paiement de {total_fmt} FCFA pour la commande #{order_short} via {method} a bien été reçu et validé !"
+    elif target_order.payment_status == "pending":
+        return f"⏳ Le paiement pour votre commande #{order_short} ({total_fmt} FCFA) est actuellement en attente de confirmation de l'opérateur."
+    else:
+        return (
+            f"ℹ️ Votre commande #{order_short} ({total_fmt} FCFA) est actuellement en attente de règlement.\n"
+            f"Souhaitez-vous recevoir un lien de paiement Wave ou Orange Money ?"
+        )

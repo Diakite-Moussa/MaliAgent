@@ -987,6 +987,17 @@
 
       <button 
         class="tab-btn" 
+        [class.active]="activeTab() === 'payments'" 
+        (click)="activeTab.set('payments'); loadPayments()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+        Paiements Mobile
+        @if (paymentKpis().pending_count > 0) {
+          <span class="badge-count">{{ paymentKpis().pending_count }}</span>
+        }
+      </button>
+
+      <button 
+        class="tab-btn" 
         [class.active]="activeTab() === 'support'" 
         (click)="activeTab.set('support')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
@@ -1616,6 +1627,215 @@
             </div>
           }
         </div>
+      </div>
+    }
+
+    <!-- ========== ONGLET PAIEMENTS MOBILE MONEY (V2.1) ========== -->
+    @if (activeTab() === 'payments') {
+      <div class="tab-pane">
+
+        <!-- En-tête de section -->
+        <div class="section-header">
+          <div>
+            <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.25rem;">
+              <h2 class="section-title">Paiements & Encaissements Mobile Money</h2>
+              <span class="badge badge-pending" style="font-size: 0.75rem;">Phase V2.1 — Simulation Active</span>
+            </div>
+            <p class="section-desc">Suivi en temps réel des règlements clients par Wave, Orange Money et Cash</p>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" (click)="loadPayments()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              Actualiser
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 KPIs Paiements -->
+        <div class="kpis-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 1.5rem;">
+          <div class="kpi-card">
+            <div class="kpi-icon icon-revenue">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"></path></svg>
+            </div>
+            <div class="kpi-content">
+              <span class="kpi-label">Total Encaissé Validé</span>
+              <span class="kpi-value text-emerald">{{ formatFcfa(paymentKpis().total_collected) }}</span>
+              <span class="kpi-hint">{{ paymentKpis().success_count }} paiement(s) confirmés</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background: rgba(16, 185, 129, 0.15); color: #10B981;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </div>
+            <div class="kpi-content">
+              <span class="kpi-label">Paiements Réussis</span>
+              <span class="kpi-value text-emerald">{{ paymentKpis().success_count }}</span>
+              <span class="kpi-hint">Commandes confirmées</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background: rgba(245, 158, 11, 0.15); color: #F59E0B;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </div>
+            <div class="kpi-content">
+              <span class="kpi-label">En Attente Validation</span>
+              <span class="kpi-value text-amber">{{ paymentKpis().pending_count }}</span>
+              <span class="kpi-hint">Lien ou USSD émis</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background: rgba(239, 68, 68, 0.15); color: #EF4444;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+            </div>
+            <div class="kpi-content">
+              <span class="kpi-label">Échecs / Expirés</span>
+              <span class="kpi-value text-danger">{{ paymentKpis().failed_count }}</span>
+              <span class="kpi-hint">Solde ou timeout</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filtres et Recherche -->
+        <div class="table-filters" style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+          <input
+            type="text"
+            class="search-input"
+            style="flex: 1; max-width: 320px; padding: 0.6rem 1rem; border-radius: 8px; background: #1E293B; border: 1px solid #334155; color: #F8FAFC;"
+            placeholder="Rechercher par réf, téléphone, commande..."
+            [ngModel]="paymentSearchQuery()"
+            (ngModelChange)="paymentSearchQuery.set($event)"
+          />
+
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <label style="color: #94A3B8; font-size: 0.85rem;">Statut :</label>
+            <select
+              style="padding: 0.5rem 0.75rem; border-radius: 8px; background: #1E293B; border: 1px solid #334155; color: #F8FAFC;"
+              [ngModel]="paymentStatusFilter()"
+              (ngModelChange)="paymentStatusFilter.set($event)"
+            >
+              <option value="all">Tous les statuts</option>
+              <option value="success">Validés (Success)</option>
+              <option value="pending_validation">En attente (Pending)</option>
+              <option value="failed">Échoués (Failed)</option>
+              <option value="expired">Expirés (Expired)</option>
+            </select>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <label style="color: #94A3B8; font-size: 0.85rem;">Opérateur :</label>
+            <select
+              style="padding: 0.5rem 0.75rem; border-radius: 8px; background: #1E293B; border: 1px solid #334155; color: #F8FAFC;"
+              [ngModel]="paymentProviderFilter()"
+              (ngModelChange)="paymentProviderFilter.set($event)"
+            >
+              <option value="all">Tous les opérateurs</option>
+              <option value="wave">Wave Mali</option>
+              <option value="orange">Orange Money</option>
+              <option value="cash">Espèces</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Tableau des Transactions -->
+        <div class="card table-card">
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Référence</th>
+                  <th>Opérateur</th>
+                  <th>Montant</th>
+                  <th>Client / Téléphone</th>
+                  <th>Statut</th>
+                  <th>Actions & Simulation</th>
+                </tr>
+              </thead>
+              <tbody>
+                @if (filteredPayments().length === 0) {
+                  <tr>
+                    <td colspan="7" class="empty-cell" style="text-align: center; padding: 2.5rem; color: #94A3B8;">
+                      Aucune transaction de paiement trouvée.
+                    </td>
+                  </tr>
+                }
+                @for (p of filteredPayments(); track p.id) {
+                  <tr>
+                    <td class="font-mono text-sm" style="color: #94A3B8;">
+                      {{ p.created_at ? p.created_at.slice(0, 16).replace('T', ' ') : 'N/A' }}
+                    </td>
+                    <td>
+                      <span class="font-mono text-xs" style="font-weight: 700; color: #F8FAFC;">{{ p.transaction_reference }}</span>
+                      <div class="text-xs text-muted">Cmd #{{ p.order_id ? p.order_id.slice(0, 8) : 'N/A' }}</div>
+                    </td>
+                    <td>
+                      @if (p.provider.toLowerCase().includes('wave')) {
+                        <span class="badge" style="background: rgba(29, 161, 242, 0.2); color: #38BDF8; font-weight: 700;">
+                          🌊 Wave
+                        </span>
+                      } @else if (p.provider.toLowerCase().includes('orange')) {
+                        <span class="badge" style="background: rgba(255, 121, 0, 0.2); color: #FB923C; font-weight: 700;">
+                          🍊 Orange Money
+                        </span>
+                      } @else {
+                        <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34D399; font-weight: 700;">
+                          💵 Cash
+                        </span>
+                      }
+                    </td>
+                    <td style="font-weight: 700; color: #F1F5F9;">
+                      {{ formatFcfa(p.amount) }}
+                    </td>
+                    <td class="font-mono text-sm">
+                      {{ p.customer_phone || 'Non renseigné' }}
+                    </td>
+                    <td>
+                      @if (p.status === 'success') {
+                        <span class="badge badge-confirmed">✔ Validé</span>
+                      } @else if (p.status === 'pending_validation' || p.status === 'initiated') {
+                        <span class="badge badge-pending">⏳ En attente</span>
+                      } @else if (p.status === 'failed') {
+                        <span class="badge badge-cancelled">❌ Rejeté</span>
+                      } @else {
+                        <span class="badge">{{ p.status }}</span>
+                      }
+                    </td>
+                    <td>
+                      <div style="display: flex; gap: 0.4rem; align-items: center;">
+                        @if (p.checkout_url) {
+                          <a [href]="p.checkout_url" target="_blank" class="btn btn-xs btn-outline" title="Ouvrir la page de paiement">
+                            Lien ↗
+                          </a>
+                        }
+                        @if (p.status === 'pending_validation' || p.status === 'initiated') {
+                          <button
+                            class="btn btn-xs btn-primary"
+                            style="background: #10B981; border-color: #10B981;"
+                            (click)="simulatePayment(p, 'success')"
+                            title="Simuler la validation par le client"
+                          >
+                            ✓ Simuler Succès
+                          </button>
+                          <button
+                            class="btn btn-xs btn-danger"
+                            (click)="simulatePayment(p, 'failed')"
+                            title="Simuler un échec / rejet"
+                          >
+                            ✕ Échec
+                          </button>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
     }
 

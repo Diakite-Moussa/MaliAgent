@@ -252,20 +252,37 @@ def generate_invoice_pdf(
     story.append(totals_table)
     story.append(Spacer(1, 30))
 
-    # 5. Pied de page & Conditions de règlement
-    notice_text = (
-        "<b>Modalités de paiement :</b> Règlement à la livraison en espèces ou par transfert d'argent mobile "
-        "(Orange Money / Wave) selon les consignes transmises par la boutique.<br/>"
-        "Ce document fait foi de commande et de facture commerciale émise via la plateforme <b>MaliAgent</b>."
-    )
+    # 5. Pied de page & Conditions de règlement / Statut acquitté
+    is_paid = getattr(invoice, "status", "") == "paid"
+    pay_method = getattr(invoice, "payment_method", None) or "Mobile Money"
+    pay_ref = getattr(invoice, "payment_reference", None)
+
+    if is_paid:
+        ref_text = f" — Réf transaction : <b>{pay_ref}</b>" if pay_ref else ""
+        notice_text = (
+            f"<font color='#059669'><b>✔ FACTURE ACQUITTÉE</b></font><br/>"
+            f"Ce montant a été intégralement réglé par le client via <b>{pay_method}</b>{ref_text}.<br/>"
+            f"Document certifié conforme et émis par la plateforme <b>MaliAgent</b>."
+        )
+        box_bg = colors.HexColor("#ECFDF5")
+        box_border = colors.HexColor("#10B981")
+    else:
+        notice_text = (
+            "<b>Modalités de paiement :</b> Règlement sécurisé par transfert d'argent mobile "
+            "(Wave / Orange Money) ou en espèces à la livraison selon les consignes transmises.<br/>"
+            "Ce document fait foi de commande et de facture commerciale émise via la plateforme <b>MaliAgent</b>."
+        )
+        box_bg = bg_light
+        box_border = border_color
+
     notice_box = Table(
         [[Paragraph(notice_text, subtitle_style)]],
         colWidths=[520],
     )
     notice_box.setStyle(
         TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg_light),
-            ("BOX", (0, 0), (-1, -1), 0.5, border_color),
+            ("BACKGROUND", (0, 0), (-1, -1), box_bg),
+            ("BOX", (0, 0), (-1, -1), 1 if is_paid else 0.5, box_border),
             ("PADDING", (0, 0), (-1, -1), 10),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ])

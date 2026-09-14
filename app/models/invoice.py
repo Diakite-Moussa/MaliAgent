@@ -33,6 +33,10 @@ class Invoice(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     # 'issued' (émise / en attente de règlement), 'paid' (acquittée), 'cancelled' (annulée)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="issued")
 
+    # Méthode et référence de paiement (ex: Wave, Orange Money - PAY-2026-OM-...)
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payment_reference: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     # Chemin local vers le fichier PDF généré
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 

@@ -8,6 +8,7 @@ from app.models.delivery_mission import AssignmentType, DeliveryMission, Mission
 from app.models.delivery_partner import DeliveryPartner
 from app.models.invoice import Invoice
 from app.models.order import Order, OrderItem, OrderStatus
+from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.models.product import Product
 from app.models.subscription import Subscription, SubscriptionPlan, SubscriptionStatus
 from app.models.user import DriverType, User, UserRole
@@ -20,6 +21,9 @@ __all__ = [
     "Order",
     "OrderItem",
     "OrderStatus",
+    "Payment",
+    "PaymentProvider",
+    "PaymentStatus",
     "DeliveryZone",
     "DeliveryPartner",
     "DeliveryMission",
