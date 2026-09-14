@@ -8,11 +8,34 @@ au moment du changement de modèle en production.
 """
 
 import json
+import logging
 import uuid
 
 import httpx
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.llm.base import LLMProvider, LLMResponse, Message, ToolCall, ToolDefinition
+
+logger = logging.getLogger("maliagent.llm.ollama")
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    """
+    Ne retente que les erreurs transitoires (timeout, réseau, 5xx serveur).
+    Une erreur 4xx (401 clé invalide, 400 payload malformé...) ne doit
+    JAMAIS être retentée : elle échouera systématiquement de la même façon.
+    """
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
 
 
 class OllamaCloudProvider(LLMProvider):
@@ -46,6 +69,28 @@ class OllamaCloudProvider(LLMProvider):
             for t in tools
         ]
 
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception(_is_retryable_error),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    async def _call_completions(self, payload: dict) -> dict:
+        """
+        Appel HTTP brut à Ollama Cloud, isolé pour bénéficier du retry
+        automatique avec backoff exponentiel (jusqu'à 3 tentatives) sur les
+        erreurs transitoires uniquement (timeout, réseau, 5xx).
+        """
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{self._base_url}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def chat(
         self,
         messages: list[Message],
@@ -59,14 +104,18 @@ class OllamaCloudProvider(LLMProvider):
         if openai_tools:
             payload["tools"] = openai_tools
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{self._base_url}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json=payload,
+        try:
+            data = await self._call_completions(payload)
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Erreur Ollama Cloud (HTTP %s) après tentatives de retry : %s",
+                e.response.status_code,
+                e,
             )
-            resp.raise_for_status()
-            data = resp.json()
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            logger.error("Ollama Cloud injoignable après tentatives de retry : %s", e)
+            raise
 
         choice = data["choices"][0]["message"]
         content = choice.get("content")
