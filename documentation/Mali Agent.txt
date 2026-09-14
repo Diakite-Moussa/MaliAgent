@@ -1,10 +1,37 @@
 Mali Agent
 Sprint	Contenu	Statut
 1 (S1-2)	Squelette + validation tool calling + modèles DB	✅ terminé
-2 (S3-4)	WhatsApp (webhook)	← on y est
-3 (S5-6)	Tools de lecture (search_products, check_stock) réels	à venir
-4 (S7-8)	Tools d'écriture (create_order, calculate_delivery)	à venir
-5 (S9-10)	Facturation PDF	à venir
-6 (S11-12)	Dashboard Angular	à venir
-7 (S13-14)	Pilotes réels + itération	à venir
+2 (S3-4)	WhatsApp (webhook Meta)	✅ terminé
+3 (S5-6)	Tools de lecture (search_products, check_stock) réels	✅ terminé
+4 (S7-8)	Tools d'écriture (create_order, calculate_delivery) + mémoire multi-tours	✅ terminé
+5 (S9-10)	Facturation PDF (génération ReportLab, route /invoices, tool generate_invoice)	✅ terminé
+6 (S11-12)	Dashboard Angular (APIs REST FastAPI + Interface Web Angular)	✅ terminé
+7 (S13-14)	Pilotes réels + itération	← prochain sprint
 8 (S15-16)	Stabilisation	à venir
+📦 Sprint 9 (S17-18) — Modélisation, Rôles & Socle des Missions : ✅ terminé
+
+Rôle UserRole.LIVREUR = "livreur" et permissions.
+Modèle DeliveryMission (multi-tenant, statuts, adresses, code OTP secret, coordonnées GPS).
+Migration PostgreSQL scripts/migrate_v2_logistics.py.
+Provisioning d'un compte livreur de démonstration.
+Endpoints de gestion et d'attribution des courses côté commerçant (/api/delivery/missions).
+📍 Sprint 10 (S19-20) — Cycle de Vie Livreur, Navigation GPS & Validation OTP : ✅ terminé
+
+Endpoints mobiles du livreur (/api/delivery/driver/*) : accepter course, récupérer colis, départ en route.
+Géolocalisation GPS en direct et génération des liens de navigation Google Maps / Waze vers les quartiers de Bamako.
+Validation infalsifiable de la livraison par Code OTP client.
+Page publique de suivi de course pour le client WhatsApp (/api/delivery/track/{order_id}).
+Suite de tests automatisés Pytest (tests/test_v2_logistics.py).
+📱 Sprint 11 (S21-22) — Application Livreur Mobile-First (Angular 21) : ✅ terminé
+
+Interface tactile optimisée pour smartphone (viewMode === 'driver').
+Carte de mission avec boutons d'action 1-clic : « Appeler le client » et « Lancer le GPS ».
+Pavé tactile de saisie de l'OTP client.
+Historique des courses du livreur et suivi des encaissements.
+🏢 Sprint 12 (S23-24) — Cockpit Flotte Commerçant & Recette Finale V2.0 : ✅ terminé
+
+Onglet "Livraisons & Flotte" dans le Dashboard Commerçant pour piloter les livreurs sur le terrain.
+Attribution de courses en 1-clic aux coursiers internes et partenaires tiers.
+Notification WhatsApp automatique au client avec lien direct de tracking et code OTP secret.
+Script de recette bout-en-bout (scripts/test_v2_e2e_flow.py) et validation complète de la V2.0.
+

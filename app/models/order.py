@@ -43,8 +43,9 @@ class Order(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     delivery_fee: Mapped[Numeric] = mapped_column(Numeric(12, 2), nullable=False, default=0)
 
     items: Mapped[list["OrderItem"]] = relationship(
-        back_populates="order", cascade="all, delete-orphan"
+        back_populates="order", cascade="all, delete-orphan", lazy="selectin"
     )
+
 
     @property
     def total_amount(self) -> "Numeric":

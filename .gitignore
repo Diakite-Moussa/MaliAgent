@@ -23,3 +23,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Storage
+storage/invoices/*.pdf
+

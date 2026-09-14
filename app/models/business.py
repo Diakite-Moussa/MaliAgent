@@ -26,5 +26,9 @@ class Business(Base, UUIDPKMixin, TimestampMixin):
     # un seul pays/devise par business, pas de multi-devise.
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="XOF")
 
+    # Statut d'activation de la boutique par le Super Admin (section 6.3)
+    is_active: Mapped[bool] = mapped_column(default=True)
+
     def __repr__(self) -> str:
-        return f"<Business {self.name!r}>"
+        return f"<Business {self.name!r} (active={self.is_active})>"
+

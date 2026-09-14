@@ -24,6 +24,23 @@ class Settings(BaseSettings):
     whatsapp_access_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = ""
+    meta_app_secret: str = ""
+
+    # JWT (section 18.1)
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24  # 24h
+
+    # URL publique (factures PDF, webhooks, liens clients)
+    public_base_url: str = "http://localhost:8000"
+
+    # CORS (origines autorisées pour le dashboard commerçant)
+    cors_origins: str = "http://localhost:4300,http://127.0.0.1:4300"
+
+    @property
+    def allowed_cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 settings = Settings()
+

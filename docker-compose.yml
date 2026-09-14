@@ -11,6 +11,30 @@ services:
       - "5434:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maliagent -d maliagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maliagent-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # En conteneur, l'hôte PostgreSQL est le nom du service Docker
+      DATABASE_URL: postgresql+psycopg://maliagent:maliagent@postgres:5432/maliagent
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage/invoices:/app/storage/invoices
 
 volumes:
   postgres-data:
