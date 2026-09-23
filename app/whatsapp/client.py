@@ -100,3 +100,42 @@ async def send_document_message(
     }
     headers = {"Authorization": f"Bearer {settings.whatsapp_access_token}"}
     return await _post_with_retry(url, headers, payload)
+
+
+async def send_image_message(
+    to: str,
+    image_url: str,
+    caption: str | None = None,
+) -> dict:
+    """
+    Envoie une image (ex: photo produit) à un numéro WhatsApp via l'API Cloud Meta avec retry automatique.
+    """
+    url = f"https://graph.facebook.com/v21.0/{settings.whatsapp_phone_number_id}/messages"
+    image_data: dict[str, str] = {"link": image_url}
+    if caption:
+        image_data["caption"] = caption
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "image",
+        "image": image_data,
+    }
+    headers = {"Authorization": f"Bearer {settings.whatsapp_access_token}"}
+    return await _post_with_retry(url, headers, payload)
+
+
+async def send_audio_message(to: str, audio_url: str) -> dict:
+    """
+    Envoie une note vocale / message audio à un numéro WhatsApp avec retry automatique.
+    """
+    url = f"https://graph.facebook.com/v21.0/{settings.whatsapp_phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "audio",
+        "audio": {"link": audio_url},
+    }
+    headers = {"Authorization": f"Bearer {settings.whatsapp_access_token}"}
+    return await _post_with_retry(url, headers, payload)

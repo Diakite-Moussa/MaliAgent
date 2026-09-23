@@ -32,22 +32,48 @@ TOOLS = [
         },
     ),
     ToolDefinition(
+        name="send_product_photo",
+        description=(
+            "Envoie la photo officielle d'un produit au client directement sur WhatsApp. "
+            "Utilise ce tool dès que le client souhaite voir un produit ou en demande une image "
+            "(ex: 'envoyez-moi une photo', 'vous avez une image ?', 'montrez-moi le produit')."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "product_name": {
+                    "type": "string",
+                    "description": "Nom ou mot-clé du produit dont le client souhaite voir la photo",
+                },
+            },
+            "required": ["product_name"],
+        },
+    ),
+    ToolDefinition(
         name="calculate_delivery",
         description=(
             "Calcule les frais et délais de livraison pour un quartier, une commune ou "
-            "un lieu précis (ex. 'ACI 2000', 'Faladié', 'Kati', 'retrait en magasin'). "
-            "Utilise TOUJOURS ce tool quand le client mentionne un lieu de livraison ou "
-            "demande combien coûte la livraison."
+            "un lieu précis (ex. 'ACI 2000', 'Faladié', 'Kati', 'retrait en magasin') "
+            "OU à partir des coordonnées GPS (latitude, longitude) partagées par le client sur WhatsApp. "
+            "Utilise TOUJOURS ce tool quand le client mentionne un lieu de livraison, partage sa position GPS, "
+            "ou demande combien coûte la livraison."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "zone": {
                     "type": "string",
-                    "description": "Nom du quartier, commune ou lieu indiqué par le client",
+                    "description": "Nom du quartier, commune ou lieu indiqué par le client (optionnel si coordonnées GPS fournies)",
+                },
+                "latitude": {
+                    "type": "number",
+                    "description": "Latitude GPS exacte partagée par le client via WhatsApp (ex: 12.63214)",
+                },
+                "longitude": {
+                    "type": "number",
+                    "description": "Longitude GPS exacte partagée par le client via WhatsApp (ex: -8.02547)",
                 },
             },
-            "required": ["zone"],
         },
     ),
     ToolDefinition(
@@ -86,6 +112,18 @@ TOOLS = [
                     "type": "number",
                     "description": "Frais de livraison calculés via calculate_delivery (0 si retrait en boutique)",
                 },
+                "latitude": {
+                    "type": "number",
+                    "description": "Latitude GPS de destination si partagée par le client",
+                },
+                "longitude": {
+                    "type": "number",
+                    "description": "Longitude GPS de destination si partagée par le client",
+                },
+                "allow_partial": {
+                    "type": "boolean",
+                    "description": "Si vrai, valide la commande avec les stocks disponibles maximums en cas de rupture partielle sur un article.",
+                },
             },
             "required": ["items", "delivery_address"],
         },
@@ -123,9 +161,9 @@ TOOLS = [
         name="escalate_to_human",
         description=(
             "Transfère immédiatement la conversation à un responsable ou conseiller humain de la boutique. "
-            "Utilise ce tool dès que le client demande explicitement à parler à un humain ('je veux parler au patron', "
-            "'passez-moi un conseiller', 'appelez-moi un responsable'), lors d'une réclamation complexe, "
-            "ou d'une demande de négociation de prix / remise impossible à traiter automatiquement."
+            "Utilise ce tool dès que le client demande explicitement à parler à un humain en français ou bambara ('je veux parler au patron', "
+            "'passez-moi un conseiller', 'appelez-moi un responsable', 'mɔgɔ bɛ yen wa', 'n'b'a fɛ ka kuma mɔgɔ yɛrɛ fɛ', 'kuma kuntigi fɛ'), "
+            "lors d'une réclamation complexe, d'un problème de SAV, ou d'une demande de négociation de prix / remise impossible à traiter automatiquement."
         ),
         parameters={
             "type": "object",
@@ -190,15 +228,15 @@ TOOLS = [
     ToolDefinition(
         name="initiate_payment",
         description=(
-            "Initie une demande de règlement par Mobile Money (Wave ou Orange Money) ou enregistre un paiement en espèces pour une commande. "
-            "Utilise ce tool dès que le client indique comment il souhaite régler (ex: 'je veux payer par Wave', 'envoyez-moi le lien Wave', 'je paie par Orange Money', 'je préfère payer cash')."
+            "Initie une demande de règlement par Mobile Money (Wave, Orange Money, Moov Money) ou enregistre un paiement en espèces pour une commande. "
+            "Utilise ce tool dès que le client indique comment il souhaite régler (ex: 'je veux payer par Wave', 'envoyez-moi le lien Wave', 'je paie par Orange Money', 'je veux payer par Moov Money', 'wari sara ni Wave ye', 'je préfère payer cash / wari kɛlɛn')."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "provider": {
                     "type": "string",
-                    "description": "Opérateur de paiement choisi : 'wave' pour Wave, 'orange_money' pour Orange Money, 'cash' pour paiement à la livraison.",
+                    "description": "Opérateur de paiement choisi : 'wave' pour Wave, 'orange_money' pour Orange Money, 'moov_money' (ou 'moov') pour Moov Africa / Malitel, 'cash' pour paiement en espèces à la livraison.",
                 },
                 "customer_phone": {
                     "type": "string",

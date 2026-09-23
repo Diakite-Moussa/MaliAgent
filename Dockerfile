@@ -27,8 +27,8 @@ COPY app/ ./app
 COPY scripts/ ./scripts
 COPY storage/ ./storage
 
-# Création du dossier storage s'il n'existe pas
-RUN mkdir -p /app/storage/invoices
+# Création des dossiers storage s'ils n'existent pas
+RUN mkdir -p /app/storage/invoices /app/storage/audio/outgoing /app/storage/products
 
 # Port exposé par FastAPI
 EXPOSE 8000

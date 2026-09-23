@@ -27,5 +27,9 @@ class Product(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
 
     stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # URL publique de la photo produit (upload local /api/products/images/...
+    # ou URL externe CDN/Cloudinary), utilisée pour l'envoi WhatsApp.
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     def __repr__(self) -> str:
         return f"<Product {self.name!r} ({self.category})>"

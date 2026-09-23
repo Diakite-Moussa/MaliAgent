@@ -25,5 +25,10 @@ Thumbs.db
 *.log
 
 # Storage
-storage/invoices/*.pdf
+storage/invoices/*
+!storage/invoices/.gitkeep
+storage/audio/*
+!storage/audio/.gitkeep
+storage/products/*
+!storage/products/.gitkeep
 

@@ -7,6 +7,7 @@ par le LLM). Chaque requête est filtrée par business_id — c'est
 l'isolation multi-tenant en pratique, pas seulement dans le schéma.
 """
 
+import json
 import unicodedata
 import uuid
 from datetime import datetime
@@ -16,7 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business.geo import resolve_bamako_zone_from_gps
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.models import (
     Business,
     Conversation,
@@ -31,18 +34,24 @@ from app.models import (
 from app.payments.service import payment_service
 from app.services.invoice_generator import generate_invoice_pdf
 
+logger = get_logger("tools.executor")
+
 
 def _normalize(s: str) -> str:
     """
     Normalise une chaîne pour un matching robuste aux variantes de
     formatage introduites par le LLM (tirets typographiques ‑/–/—
     copiés depuis ses propres réponses en Markdown, espaces multiples,
-    casse, accents typographiques). Sans ça, un nom de produit ré-injecté
-    depuis une réponse formatée peut ne plus matcher le nom en base.
+    casse, accents typographiques, parenthèses ajoutées/retirées autour
+    d'un mot comme '(Original)' ou '(Neuf)'). Sans ça, un nom de produit
+    ré-injecté depuis une réponse formatée peut ne plus matcher le nom en base.
     """
     s = unicodedata.normalize("NFKC", s or "")
     for dash in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"):
         s = s.replace(dash, "-")
+    # Retire les parenthèses tout en gardant leur contenu textuel, pour que
+    # 'Chargeur Type-C (Original)' matche 'Chargeur Type-C Original'
+    s = s.replace("(", " ").replace(")", " ")
     s = " ".join(s.split())
     return s.strip().lower()
 
@@ -59,8 +68,16 @@ async def execute_tool(
         return await _search_products(session, business_id, arguments.get("query", ""))
     if tool_name == "check_stock":
         return await _check_stock(session, business_id, arguments.get("product_name", ""))
+    if tool_name == "send_product_photo":
+        return await _send_product_photo(session, business_id, arguments.get("product_name", ""))
     if tool_name == "calculate_delivery":
-        return await _calculate_delivery(session, business_id, arguments.get("zone", ""))
+        return await _calculate_delivery(
+            session,
+            business_id,
+            arguments.get("zone", ""),
+            arguments.get("latitude"),
+            arguments.get("longitude"),
+        )
     if tool_name == "create_order":
         return await _create_order(
             session,
@@ -69,6 +86,9 @@ async def execute_tool(
             arguments.get("items", []),
             arguments.get("delivery_address", ""),
             arguments.get("delivery_fee", 0),
+            arguments.get("latitude"),
+            arguments.get("longitude"),
+            allow_partial=bool(arguments.get("allow_partial", False)),
         )
     if tool_name == "get_order_status":
         return await _get_order_status(session, business_id, customer_id)
@@ -176,7 +196,83 @@ async def _check_stock(session: AsyncSession, business_id: uuid.UUID, product_na
     return f"Stock de {product.name} : {product.stock_quantity} unité(s) au prix de {int(product.price)} FCFA."
 
 
-async def _calculate_delivery(session: AsyncSession, business_id: uuid.UUID, zone: str) -> str:
+async def _send_product_photo(
+    session: AsyncSession, business_id: uuid.UUID, product_name: str
+) -> str:
+    """
+    Recherche la photo d'un produit et encode son URL dans un marqueur machine
+    consommé par l'orchestrateur avant transmission du résultat au LLM.
+    """
+    stmt = select(Product).where(
+        Product.business_id == business_id,
+        Product.name.ilike(product_name.strip()),
+    )
+    product = (await session.execute(stmt)).scalar_one_or_none()
+
+    if not product:
+        normalized_name = _normalize(product_name)
+        norm_words = [word for word in normalized_name.split() if len(word) > 1]
+        stmt_all = select(Product).where(Product.business_id == business_id)
+        all_products = (await session.execute(stmt_all)).scalars().all()
+        for candidate in all_products:
+            candidate_normalized = _normalize(candidate.name)
+            if (
+                normalized_name in candidate_normalized
+                or candidate_normalized in normalized_name
+                or (norm_words and all(word in candidate_normalized for word in norm_words))
+            ):
+                product = candidate
+                break
+
+    if not product:
+        return "Produit introuvable : aucune photo à envoyer pour ce nom."
+
+    if not product.image_url:
+        return f"Le produit '{product.name}' n'a pas encore de photo enregistrée dans le catalogue."
+
+    caption = f"{product.name} — {int(product.price)} FCFA"
+    payload = {"url": product.image_url, "caption": caption}
+    marker = f"__PHOTO_PAYLOAD__{json.dumps(payload, ensure_ascii=False)}__END__"
+    natural_text = (
+        f"Photo de {product.name} envoyée au client sur WhatsApp (Prix : {int(product.price)} FCFA)."
+    )
+    return f"{marker}\n{natural_text}"
+
+
+async def _calculate_delivery(
+    session: AsyncSession,
+    business_id: uuid.UUID,
+    zone: str = "",
+    latitude: float | int | None = None,
+    longitude: float | int | None = None,
+) -> str:
+    # 1. Traitement prioritaire par coordonnées GPS précises (WhatsApp Location)
+    if latitude is not None and longitude is not None:
+        try:
+            lat_f = float(latitude)
+            lon_f = float(longitude)
+            geo_res = resolve_bamako_zone_from_gps(lat_f, lon_f)
+
+            stmt = select(DeliveryZone).where(
+                DeliveryZone.business_id == business_id,
+                DeliveryZone.active.is_(True),
+            )
+            zones = (await session.execute(stmt)).scalars().all()
+            matched_custom = None
+            for z in zones:
+                if geo_res["commune"].lower() in z.name.lower():
+                    matched_custom = z
+                    break
+
+            final_fee = int(matched_custom.fee) if matched_custom else int(geo_res["fee"])
+            return (
+                f"Position GPS reçue : {geo_res['neighborhood']} ({geo_res['commune']}). "
+                f"Frais de livraison fixes : {final_fee} FCFA (Délai estimé : {geo_res['delivery_delay']}). "
+                f"Itinéraire cartographique : {geo_res['maps_url']}"
+            )
+        except Exception:
+            pass
+
     zone_clean = (zone or "").strip().lower()
 
     if any(k in zone_clean for k in ["retrait", "magasin", "boutique", "sur place", "passer chercher"]):
@@ -247,6 +343,9 @@ async def _create_order(
     items: list[dict],
     delivery_address: str,
     delivery_fee: float | int | str = 0,
+    latitude: float | int | None = None,
+    longitude: float | int | None = None,
+    allow_partial: bool = False,
 ) -> str:
     if not items:
         return "Erreur : aucun article spécifié pour la commande."
@@ -256,14 +355,31 @@ async def _create_order(
     except Exception:
         fee = Decimal("0")
 
+    deliv_lat = None
+    deliv_lon = None
+    if latitude is not None:
+        try:
+            deliv_lat = Decimal(str(latitude))
+        except Exception:
+            pass
+    if longitude is not None:
+        try:
+            deliv_lon = Decimal(str(longitude))
+        except Exception:
+            pass
+
     stmt = select(Product).where(Product.business_id == business_id)
     result = await session.execute(stmt)
     all_products = result.scalars().all()
 
-    order_lines: list[tuple[Product, int]] = []
+    valid_lines: list[tuple[Product, int]] = []
+    partial_issues: list[dict] = []
+    out_of_stock_issues: list[dict] = []
+    not_found_issues: list[str] = []
 
     for item in items:
-        product_name = _normalize(str(item.get("product_name", "")))
+        product_name_raw = str(item.get("product_name", ""))
+        product_name = _normalize(product_name_raw)
         try:
             qty = int(item.get("quantity", 1))
         except (ValueError, TypeError):
@@ -286,30 +402,112 @@ async def _create_order(
                 break
 
         if not found_prod:
-            return f"Erreur de commande : le produit '{item.get('product_name')}' est introuvable au catalogue."
+            not_found_issues.append(product_name_raw)
+            continue
 
-        if found_prod.stock_quantity < qty:
+        if found_prod.stock_quantity <= 0:
             alternative = _find_alternative_product(all_products, found_prod, qty)
-            if alternative:
+            out_of_stock_issues.append({
+                "product": found_prod,
+                "requested_qty": qty,
+                "alternative": alternative,
+            })
+        elif found_prod.stock_quantity < qty:
+            alternative = _find_alternative_product(all_products, found_prod, qty)
+            partial_issues.append({
+                "product": found_prod,
+                "requested_qty": qty,
+                "available_qty": found_prod.stock_quantity,
+                "alternative": alternative,
+            })
+            if allow_partial:
+                valid_lines.append((found_prod, found_prod.stock_quantity))
+        else:
+            valid_lines.append((found_prod, qty))
+
+    if not_found_issues:
+        return f"Erreur de commande : le produit '{not_found_issues[0]}' est introuvable au catalogue."
+
+    # S'il y a des ruptures partielles ou totales et que la commande partielle n'est pas explicitement autorisée
+    if (partial_issues or out_of_stock_issues) and not allow_partial:
+        # Cas mono-produit rupture totale (rétrocompatibilité avec scénario 2)
+        if len(items) == 1 and out_of_stock_issues:
+            issue = out_of_stock_issues[0]
+            prod = issue["product"]
+            alt = issue["alternative"]
+            if alt:
                 return (
-                    f"Stock insuffisant pour '{found_prod.name}' "
-                    f"(demandé : {qty}, disponible : {found_prod.stock_quantity}).\n"
-                    f"En alternative, je peux vous proposer : {alternative.name} "
-                    f"({int(alternative.price)} FCFA, {alternative.stock_quantity} en stock). "
+                    f"Stock insuffisant pour '{prod.name}' "
+                    f"(demandé : {issue['requested_qty']}, disponible : 0).\n"
+                    f"En alternative, je peux vous proposer : {alt.name} "
+                    f"({int(alt.price)} FCFA, {alt.stock_quantity} en stock). "
                     f"Souhaitez-vous cet article à la place ?"
                 )
             return (
-                f"Impossible de valider la commande : stock insuffisant pour '{found_prod.name}'. "
-                f"Demandé : {qty}, Disponible en stock : {found_prod.stock_quantity}."
+                f"Impossible de valider la commande : stock insuffisant pour '{prod.name}'. "
+                f"Demandé : {issue['requested_qty']}, Disponible en stock : 0."
             )
 
-        order_lines.append((found_prod, qty))
+        # Cas mono-produit rupture partielle (ex: demandé 3, disponible 1)
+        if len(items) == 1 and partial_issues:
+            issue = partial_issues[0]
+            prod = issue["product"]
+            alt = issue["alternative"]
+            msg = (
+                f"Stock insuffisant pour '{prod.name}' : seulement {issue['available_qty']} unité(s) disponible(s) "
+                f"(demandé : {issue['requested_qty']}).\n"
+            )
+            if alt:
+                msg += f"En alternative pour le surplus ou remplacement : {alt.name} ({int(alt.price)} FCFA, {alt.stock_quantity} en stock).\n"
+            msg += (
+                f"Souhaitez-vous valider la commande avec les {issue['available_qty']} unité(s) disponible(s) "
+                f"ou choisir l'alternative proposée ?"
+            )
+            return msg
+
+        # Cas panier multi-articles avec ruptures partielles ou totales
+        lines_msg = ["⚠️ *Analyse de disponibilité pour votre commande :*"]
+        if valid_lines:
+            lines_msg.append("\n✅ *Articles disponibles immédiatement :*")
+            for prod, qty in valid_lines:
+                lines_msg.append(f"• {qty}x {prod.name} (en stock)")
+
+        if partial_issues:
+            lines_msg.append("\n⚠️ *Ruptures partielles (stock insuffisant) :*")
+            for issue in partial_issues:
+                p = issue["product"]
+                lines_msg.append(f"• *{p.name}* : {issue['available_qty']} disponible(s) (demandé : {issue['requested_qty']})")
+                if issue["alternative"]:
+                    alt = issue["alternative"]
+                    lines_msg.append(f"  ↪ Alternative suggérée : {alt.name} ({int(alt.price)} FCFA, {alt.stock_quantity} en stock)")
+
+        if out_of_stock_issues:
+            lines_msg.append("\n❌ *Articles en rupture totale :*")
+            for issue in out_of_stock_issues:
+                p = issue["product"]
+                lines_msg.append(f"• *{p.name}* : 0 unité en stock (demandé : {issue['requested_qty']})")
+                if issue["alternative"]:
+                    alt = issue["alternative"]
+                    lines_msg.append(f"  ↪ Alternative suggérée : {alt.name} ({int(alt.price)} FCFA, {alt.stock_quantity} en stock)")
+
+        lines_msg.append("\n*Options possibles :*")
+        lines_msg.append("1. Confirmer la commande avec les quantités disponibles.")
+        lines_msg.append("2. Remplacer un article manquant par une alternative.")
+        lines_msg.append("3. Retirer les articles en rupture.")
+        return "\n".join(lines_msg)
+
+    if not valid_lines:
+        return "Impossible de créer la commande : aucun article n'est disponible en stock."
+
+    order_lines = valid_lines
 
     order = Order(
         business_id=business_id,
         customer_id=customer_id,
         delivery_address=(delivery_address or "Retrait en boutique").strip(),
         delivery_fee=fee,
+        delivery_latitude=deliv_lat,
+        delivery_longitude=deliv_lon,
         status=OrderStatus.PENDING,
     )
     session.add(order)
@@ -319,6 +517,7 @@ async def _create_order(
     summary_items = []
     for prod, qty in order_lines:
         prod.stock_quantity -= qty
+        session.add(prod)
         item_cost = prod.price * qty
         total_products_cost += item_cost
         order_item = OrderItem(
@@ -334,7 +533,7 @@ async def _create_order(
 
     short_id = str(order.id)[:8].upper()
     total_general = total_products_cost + fee
-    return (
+    resp_msg = (
         f"Commande #{short_id} confirmée et enregistrée avec succès !\n"
         f"Articles : {', '.join(summary_items)}\n"
         f"Frais de livraison : {int(fee)} FCFA\n"
@@ -342,6 +541,11 @@ async def _create_order(
         f"Adresse : {order.delivery_address}\n"
         f"Statut : En attente de validation et préparation par la boutique."
     )
+    if partial_issues:
+        adjusted_summary = [f"{i['product'].name} (ajusté à {i['available_qty']} unité(s))" for i in partial_issues]
+        resp_msg += f"\n*Note d'ajustement* : {', '.join(adjusted_summary)} en raison du stock disponible."
+
+    return resp_msg
 
 
 async def _get_order_status(
@@ -495,7 +699,16 @@ async def _escalate_to_human(
     if conv:
         conv.status = "needs_human"
         conv.handoff_reason = reason
-        await session.commit()
+
+    # Vérification de la langue préférée du client
+    cust = (await session.execute(select(Customer).where(Customer.id == customer_id))).scalar_one_or_none()
+    await session.commit()
+
+    if cust and getattr(cust, "preferred_language", "fr") == "bm":
+        return (
+            f"I ka ɲiningali bilala boutique kuntigi cɛ (Kun : {reason}). "
+            f"Mɔgɔ bɛna i jaabi yan sisan WhatsApp kan ka dɛmɛ di i ma."
+        )
 
     return (
         f"Votre demande a bien été transmise à un conseiller de notre boutique "
@@ -522,6 +735,14 @@ async def _cancel_order(
     )
     orders = (await session.execute(stmt)).scalars().all()
 
+    logger.info(
+        "[DIAG cancel_order] customer_id=%s order_ref_reçu=%r -> %d commande(s) trouvée(s) : %s",
+        customer_id,
+        order_ref,
+        len(orders),
+        [(str(o.id)[:8].upper(), o.status.value) for o in orders],
+    )
+
     if not orders:
         return "Aucune commande trouvée à annuler pour votre compte."
 
@@ -543,6 +764,13 @@ async def _cancel_order(
     if not target_order:
         return "Toutes vos commandes sont déjà livrées ou déjà annulées. Aucune commande active à annuler."
 
+    logger.info(
+        "[DIAG cancel_order] Commande ciblée pour annulation : #%s (statut=%s), %d article(s)",
+        str(target_order.id)[:8].upper(),
+        target_order.status.value,
+        len(target_order.items),
+    )
+
     if target_order.status == OrderStatus.DELIVERED:
         return f"La commande #{str(target_order.id)[:8].upper()} a déjà été livrée et ne peut plus être annulée automatiquement."
 
@@ -552,12 +780,29 @@ async def _cancel_order(
     # Annulation
     target_order.status = OrderStatus.CANCELLED
 
-    # Réapprovisionnement automatique du stock
+    # Réapprovisionnement automatique et garanti du stock
+    restored_count = 0
     for item in target_order.items:
-        stmt_p = select(Product).where(Product.id == item.product_id)
+        stmt_p = select(Product).where(Product.id == item.product_id, Product.business_id == business_id)
         prod = (await session.execute(stmt_p)).scalar_one_or_none()
         if prod:
+            before = prod.stock_quantity
             prod.stock_quantity += item.quantity
+            session.add(prod)
+            restored_count += 1
+            logger.info(
+                "[STOCK cancel_order] Réapprovisionnement garanti produit %s (%s) : %d -> %d (+%d)",
+                prod.name,
+                str(prod.id)[:8].upper(),
+                before,
+                prod.stock_quantity,
+                item.quantity,
+            )
+        else:
+            logger.warning(
+                "[DIAG cancel_order] ATTENTION : produit introuvable pour product_id=%s (article orphelin, stock NON restauré)",
+                item.product_id,
+            )
 
     # Annulation facture associée si existante
     stmt_inv = select(Invoice).where(Invoice.order_id == target_order.id)
@@ -566,6 +811,7 @@ async def _cancel_order(
         inv.status = "cancelled"
 
     await session.commit()
+    await session.refresh(target_order)
 
     short_id = str(target_order.id)[:8].upper()
     return (
@@ -750,6 +996,15 @@ async def _initiate_payment(
                 f"Une demande de paiement **Orange Money** de {total_fmt} FCFA a été initiée pour la commande #{order_short} "
                 f"vers le numéro {phone_str}.\n"
                 f"📱 Vous pouvez également valider votre paiement directement via ce lien sécurisé :\n"
+                f"👉 {payment.checkout_url}\n\n"
+                f"Réf transaction : `{payment.transaction_reference}`."
+            )
+        elif "moov" in payment.provider.lower():
+            phone_str = payment.customer_phone or "votre téléphone"
+            return (
+                f"Une demande de paiement **Moov Money** de {total_fmt} FCFA a été initiée pour la commande #{order_short} "
+                f"vers le numéro {phone_str}.\n"
+                f"📱 Validez en composant le *166# ou directement via ce lien sécurisé :\n"
                 f"👉 {payment.checkout_url}\n\n"
                 f"Réf transaction : `{payment.transaction_reference}`."
             )
