@@ -14,6 +14,7 @@ class PaymentInitiateIn(BaseModel):
     provider: str = Field(default="mock", description="'mock', 'wave', 'orange_money', 'cash'")
     customer_phone: str | None = None
     return_url: str | None = None
+    force_new: bool = Field(default=False, description="Forcer la création d'une nouvelle session en annulant la précédente")
 
 
 class PaymentInitiateOut(BaseModel):

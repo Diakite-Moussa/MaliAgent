@@ -335,3 +335,203 @@ async def test_ai_agent_payment_tools(setup_test_data):
             arguments={"provider": "cash"},
         )
         assert "espèces" in reply_cash.lower()
+
+        # 4. Le client demande à payer via Moov Money (Malitel)
+        reply_moov = await execute_tool(
+            session=session,
+            business_id=biz_a_id,
+            customer_id=customer_a_id,
+            tool_name="initiate_payment",
+            arguments={"provider": "moov"},
+        )
+        assert "Moov Money" in reply_moov
+        assert "*166#" in reply_moov
+
+
+@pytest.mark.asyncio
+async def test_moov_money_full_cycle(setup_test_data):
+    """
+    Test 8 : Vérification du cycle complet Moov Money Mali (initiation + simulation webhook).
+    """
+    data = setup_test_data
+    biz_a_id = data["biz_a_id"]
+    order_a_id = data["order_a_id"]
+
+    async with async_session() as session:
+        # 1. Initiation Moov Money
+        payment = await payment_service.initiate_payment(
+            session=session,
+            business_id=biz_a_id,
+            order_id=order_a_id,
+            provider="moov",
+            customer_phone="22366112233",
+        )
+        assert payment.transaction_reference.startswith("PAY-MOV-")
+        assert "moov" in payment.provider
+        assert payment.status == PaymentStatus.PENDING_VALIDATION
+        assert payment.customer_phone == "22366112233"
+
+        # 2. Simulation de succès de webhook
+        res = await payment_service.simulate_payment(
+            session=session,
+            transaction_reference=payment.transaction_reference,
+            outcome="success",
+            amount=payment.amount,
+        )
+        assert res["status"] == "processed"
+        assert res["payment_status"] == "success"
+
+        # 3. Vérification de l'état en base de données
+        stmt = select(Order).where(Order.id == order_a_id)
+        order_res = await session.execute(stmt)
+        updated_order = order_res.scalar_one()
+        assert updated_order.payment_status == "paid"
+        assert updated_order.status == OrderStatus.CONFIRMED
+
+
+@pytest.mark.asyncio
+async def test_prevent_duplicate_pending_payments(setup_test_data):
+    """
+    Vérifie qu'une deuxième demande d'initiation avec le même provider
+    réutilise la session de paiement active existante sans créer de doublon en base.
+    """
+    data = setup_test_data
+    biz_b_id = data["biz_b_id"]
+
+    async with async_session() as session:
+        # Création d'un produit et d'une nouvelle commande non payée
+        prod = Product(
+            business_id=biz_b_id,
+            name="Casque Audio Test",
+            category="Audio",
+            price=Decimal("25000.00"),
+            stock_quantity=10,
+        )
+        session.add(prod)
+        await session.flush()
+
+        order = Order(
+            business_id=biz_b_id,
+            customer_id=data["customer_a_id"],
+            delivery_fee=Decimal("1500.00"),
+            payment_status="unpaid",
+            status=OrderStatus.PENDING,
+        )
+        session.add(order)
+        await session.flush()
+
+        item = OrderItem(
+            order_id=order.id,
+            product_id=prod.id,
+            quantity=1,
+            unit_price_snapshot=Decimal("25000.00"),
+        )
+        session.add(item)
+        await session.commit()
+        await session.refresh(order)
+
+        # 1ère initiation (Wave)
+        payment_1 = await payment_service.initiate_payment(
+            session=session,
+            business_id=biz_b_id,
+            order_id=order.id,
+            provider="wave",
+        )
+        assert payment_1 is not None
+        ref_1 = payment_1.transaction_reference
+
+        # 2ème initiation immédiate (même commande, même provider)
+        payment_2 = await payment_service.initiate_payment(
+            session=session,
+            business_id=biz_b_id,
+            order_id=order.id,
+            provider="wave",
+        )
+        # Doit être exactement le même paiement
+        assert payment_2.id == payment_1.id
+        assert payment_2.transaction_reference == ref_1
+
+        # Vérifier en DB qu'il n'y a qu'UN seul enregistrement
+        p_stmt = select(Payment).where(Payment.order_id == order.id)
+        payments_in_db = list((await session.execute(p_stmt)).scalars().all())
+        assert len(payments_in_db) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_cancels_previous_pending_payment(setup_test_data):
+    """
+    Vérifie que changer de moyen de paiement (ex: Wave vers Orange Money)
+    ou utiliser force_new=True annule proprement la session précédente (statut CANCELLED).
+    """
+    data = setup_test_data
+    biz_b_id = data["biz_b_id"]
+
+    async with async_session() as session:
+        # Création d'un produit et d'une commande
+        prod = Product(
+            business_id=biz_b_id,
+            name="Chargeur Rapide",
+            category="Accessoires",
+            price=Decimal("15000.00"),
+            stock_quantity=10,
+        )
+        session.add(prod)
+        await session.flush()
+
+        order = Order(
+            business_id=biz_b_id,
+            customer_id=data["customer_a_id"],
+            delivery_fee=Decimal("1000.00"),
+            payment_status="unpaid",
+            status=OrderStatus.PENDING,
+        )
+        session.add(order)
+        await session.flush()
+
+        item = OrderItem(
+            order_id=order.id,
+            product_id=prod.id,
+            quantity=1,
+            unit_price_snapshot=Decimal("15000.00"),
+        )
+        session.add(item)
+        await session.commit()
+        await session.refresh(order)
+
+        # 1. Initiation Wave
+        p_wave = await payment_service.initiate_payment(
+            session=session,
+            business_id=biz_b_id,
+            order_id=order.id,
+            provider="wave",
+        )
+        assert p_wave.status in (PaymentStatus.INITIATED, PaymentStatus.PENDING_VALIDATION)
+
+        # 2. Changement de provider vers Orange Money
+        p_orange = await payment_service.initiate_payment(
+            session=session,
+            business_id=biz_b_id,
+            order_id=order.id,
+            provider="orange_money",
+        )
+        assert p_orange.id != p_wave.id
+
+        # 3. Vérification que l'ancien paiement Wave est passé à CANCELLED
+        await session.refresh(p_wave)
+        assert p_wave.status == PaymentStatus.CANCELLED
+        assert "cancelled_at" in (p_wave.raw_metadata or {})
+
+        # 4. Forçage d'une nouvelle session avec force_new=True
+        p_orange_forced = await payment_service.initiate_payment(
+            session=session,
+            business_id=biz_b_id,
+            order_id=order.id,
+            provider="orange_money",
+            force_new=True,
+        )
+        assert p_orange_forced.id != p_orange.id
+
+        await session.refresh(p_orange)
+        assert p_orange.status == PaymentStatus.CANCELLED
+
+

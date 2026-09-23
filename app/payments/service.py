@@ -25,6 +25,7 @@ from app.models.order import Order, OrderStatus
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.payments.base import BasePaymentGateway, PaymentInitiateRequest
 from app.payments.gateways.mock import MockPaymentGateway
+from app.payments.gateways.moov import MoovPaymentGateway
 from app.payments.gateways.orange_money import OrangeMoneyPaymentGateway
 from app.payments.gateways.wave import WavePaymentGateway
 from app.whatsapp.client import send_text_message
@@ -37,13 +38,14 @@ class PaymentService:
         self._mock_gateway = MockPaymentGateway()
         self._wave_gateway = WavePaymentGateway()
         self._orange_gateway = OrangeMoneyPaymentGateway()
+        self._moov_gateway = MoovPaymentGateway()
 
     def get_gateway(self, provider_hint: str | None = None) -> BasePaymentGateway:
         """
         Sélectionne la gateway appropriée.
         En phase de développement / simulation (PAYMENT_MODE=simulation ou PAYMENT_PROVIDER=mock),
         MockPaymentGateway est toujours retournée pour tester 100% du flux sans argent réel.
-        En production, retourne Wave ou Orange Money selon le provider spécifié.
+        En production, retourne Wave, Orange Money ou Moov Money selon le provider spécifié.
         """
         if settings.is_payment_simulation:
             return self._mock_gateway
@@ -53,7 +55,22 @@ class PaymentService:
             return self._wave_gateway
         elif "orange" in p:
             return self._orange_gateway
+        elif "moov" in p or "malitel" in p:
+            return self._moov_gateway
         return self._mock_gateway
+
+    @staticmethod
+    def _canonical_provider(p: str | None) -> str:
+        p = (p or "").lower()
+        if "wave" in p:
+            return "wave"
+        if "orange" in p:
+            return "orange"
+        if "moov" in p or "malitel" in p:
+            return "moov"
+        if "cash" in p:
+            return "cash"
+        return "mock"
 
     async def initiate_payment(
         self,
@@ -63,10 +80,11 @@ class PaymentService:
         provider: str = "mock",
         customer_phone: str | None = None,
         return_url: str | None = None,
+        force_new: bool = False,
     ) -> Payment:
         """
         Initie une transaction de paiement pour une commande donnée.
-        Vérifie l'isolation multi-tenant et crée l'enregistrement en base.
+        Vérifie l'isolation multi-tenant, prévient les doublons 'pending' et crée l'enregistrement en base.
         """
         # 1. Vérifier la commande et l'isolation tenant
         stmt = (
@@ -81,6 +99,62 @@ class PaymentService:
 
         if order.payment_status == "paid":
             raise ValueError(f"La commande {order_id} est déjà réglée.")
+
+        active_statuses = [
+            PaymentStatus.INITIATED,
+            PaymentStatus.PENDING_VALIDATION,
+            PaymentStatus.PROCESSING,
+        ]
+
+        # 1b. Vérifier les paiements actifs existants pour cette commande
+        active_stmt = (
+            select(Payment)
+            .where(
+                Payment.order_id == order_id,
+                Payment.business_id == business_id,
+                Payment.status.in_(active_statuses),
+            )
+            .order_by(desc(Payment.created_at))
+        )
+        active_res = await session.execute(active_stmt)
+        active_payments = list(active_res.scalars().all())
+
+        now = datetime.now(timezone.utc)
+        expiry_seconds = settings.payment_session_expiry_minutes * 60
+
+        if active_payments and not force_new:
+            latest_active = active_payments[0]
+            # Comparaison canonique des providers (ex: wave vs moov vs orange)
+            target_canonical = self._canonical_provider(provider)
+            current_canonical = self._canonical_provider(latest_active.provider)
+            same_provider = (target_canonical == current_canonical)
+
+            created_at = latest_active.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            is_recent = (now - created_at).total_seconds() < expiry_seconds
+
+            if same_provider and is_recent:
+                logger.info(
+                    "Session de paiement active existante réutilisée pour order_id=%s (ref=%s, statut=%s)",
+                    order_id,
+                    latest_active.transaction_reference,
+                    latest_active.status,
+                )
+                return latest_active
+
+        # Annulation des anciennes sessions actives si changement de moyen de paiement ou force_new
+        for old_payment in active_payments:
+            logger.info(
+                "Annulation de l'ancien paiement actif %s pour order_id=%s (remplacé par nouvelle initiation)",
+                old_payment.transaction_reference,
+                order_id,
+            )
+            old_payment.status = PaymentStatus.CANCELLED
+            meta = dict(old_payment.raw_metadata or {})
+            meta["cancelled_at"] = now.isoformat()
+            meta["cancellation_reason"] = "Remplacé par une nouvelle session de paiement"
+            old_payment.raw_metadata = meta
 
         customer = order.customer
         phone = customer_phone or (customer.whatsapp_phone_number if customer else None)
@@ -232,19 +306,34 @@ class PaymentService:
                             if "wave" in payment.provider
                             else "Orange Money"
                             if "orange" in payment.provider
-                            else "Paiement Mobile"
+                            else "Moov Money"
+                            if "moov" in payment.provider
+                            else "Mobile Money"
                         )
                         order_short = f"#{str(order.id)[:8]}"
-                        msg_wa = (
-                            f"✅ *Paiement reçu avec succès !*\n\n"
-                            f"Votre paiement de *{int(payment.amount):,} FCFA* via *{provider_clean}* "
-                            f"a bien été validé.\n"
-                            f"• Réf transaction : `{payment.transaction_reference}`\n"
-                            f"• Commande : `{order_short}` confirmée et en cours de préparation.\n\n"
-                            f"Merci pour votre confiance ! 🙏"
-                        )
+                        cust_lang = getattr(order.customer, "preferred_language", "fr") if order.customer else "fr"
+                        amount_int = int(payment.amount)
+
+                        if cust_lang == "bm":
+                            msg_wa = (
+                                f"✅ *Wari sarali kɛra ka ɲɛ !*\n\n"
+                                f"I ka wari *{amount_int:,} FCFA* saralen don ni *{provider_clean}* ye.\n"
+                                f"• Transaction ref : `{payment.transaction_reference}`\n"
+                                f"• I ka yamaruya (commande) `{order_short}` lankolon don, an b'a labɛn sisan.\n\n"
+                                f"I ni ce i ka lafiya la ! 🙏\n\n"
+                                f"*(Confirmation : Votre paiement de {amount_int:,} FCFA a bien été validé.)*"
+                            )
+                        else:
+                            msg_wa = (
+                                f"✅ *Paiement reçu avec succès !*\n\n"
+                                f"Votre paiement de *{amount_int:,} FCFA* via *{provider_clean}* "
+                                f"a bien été validé.\n"
+                                f"• Réf transaction : `{payment.transaction_reference}`\n"
+                                f"• Commande : `{order_short}` confirmée et en cours de préparation.\n\n"
+                                f"Merci pour votre confiance ! 🙏"
+                            )
                         await send_text_message(customer_phone, msg_wa)
-                        logger.info("Notification WhatsApp paiement envoyée à %s", customer_phone)
+                        logger.info("Notification WhatsApp paiement envoyée à %s (%s)", customer_phone, cust_lang)
                     except Exception as exc:
                         logger.error("Erreur notification WhatsApp paiement: %s", exc)
 
