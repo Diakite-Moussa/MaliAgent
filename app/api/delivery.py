@@ -4,6 +4,7 @@ Sprint 9 (V2.0 Logistique & Flotte).
 """
 
 import logging
+import re
 import secrets
 import urllib.parse
 import uuid
@@ -12,13 +13,15 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.deps import get_current_business_id, get_current_driver
+from app.core.security import hash_password
 from app.db.session import async_session
+from app.whatsapp.client import send_text_message
 
 logger = logging.getLogger(__name__)
 from app.models import (
@@ -27,6 +30,7 @@ from app.models import (
     DeliveryMission,
     DeliveryPartner,
     DeliveryZone,
+    DriverType,
     MissionStatus,
     Order,
     OrderStatus,
@@ -45,6 +49,48 @@ def build_navigation_links(address: str, lat: float | None = None, lng: float | 
         "google_maps": f"https://www.google.com/maps/dir/?api=1&destination={encoded_dest}",
         "waze": f"https://waze.com/ul?q={encoded_dest}&navigate=yes",
     }
+
+
+def _serialize_mission(m: DeliveryMission, include_otp: bool = True) -> dict:
+    """Sérialise une mission de livraison pour l'API REST de manière unifiée."""
+    lat = float(m.current_latitude) if m.current_latitude is not None else None
+    lng = float(m.current_longitude) if m.current_longitude is not None else None
+    dest_lat = float(m.destination_latitude) if m.destination_latitude is not None else None
+    dest_lng = float(m.destination_longitude) if m.destination_longitude is not None else None
+
+    driver = getattr(m, "driver", None)
+    partner = getattr(m, "partner", None)
+
+    data = {
+        "id": str(m.id),
+        "order_id": str(m.order_id),
+        "status": m.status.value,
+        "assignment_type": m.assignment_type.value if m.assignment_type else None,
+        "driver_id": str(m.driver_id) if m.driver_id else None,
+        "driver_name": f"{driver.first_name} {driver.last_name}" if driver else None,
+        "driver_phone": driver.phone_number if driver else None,
+        "partner_id": str(m.partner_id) if m.partner_id else None,
+        "partner_name": partner.name if partner else None,
+        "pickup_address": m.pickup_address,
+        "delivery_address": m.delivery_address,
+        "customer_name": m.customer_name,
+        "customer_phone": m.customer_phone,
+        "otp_verified": m.otp_verified,
+        "current_latitude": lat,
+        "current_longitude": lng,
+        "destination_latitude": dest_lat,
+        "destination_longitude": dest_lng,
+        "navigation": build_navigation_links(m.delivery_address, dest_lat, dest_lng),
+        "assigned_at": m.assigned_at.isoformat() if m.assigned_at else None,
+        "picked_up_at": m.picked_up_at.isoformat() if m.picked_up_at else None,
+        "delivered_at": m.delivered_at.isoformat() if m.delivered_at else None,
+        "notes": m.notes,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+    }
+    if include_otp:
+        data["otp_code"] = m.otp_code
+    return data
+
 
 
 # ================= SCHEMAS PYDANTIC =================
@@ -87,6 +133,28 @@ class VerifyOtpRequest(BaseModel):
     otp_code: str
 
 
+class DriverCreateIn(BaseModel):
+    first_name: str
+    last_name: str
+    phone_number: str
+    email: str | None = None
+    password: str | None = None
+    driver_type: Literal["internal", "partner"] = "internal"
+
+
+class DriverUpdateIn(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    phone_number: str | None = None
+    driver_type: Literal["internal", "partner"] | None = None
+    is_available: bool | None = None
+    is_active: bool | None = None
+
+
+class DriverAvailabilityIn(BaseModel):
+    is_available: bool
+
+
 # ================= ENDPOINTS MISSIONS =================
 
 
@@ -113,36 +181,7 @@ async def list_missions(
             stmt = stmt.where(DeliveryMission.status == status)
 
         missions = (await session.execute(stmt)).scalars().all()
-
-        results = []
-        for m in missions:
-            results.append(
-                {
-                    "id": str(m.id),
-                    "order_id": str(m.order_id),
-                    "status": m.status.value,
-                    "assignment_type": m.assignment_type.value,
-                    "driver_id": str(m.driver_id) if m.driver_id else None,
-                    "driver_name": f"{m.driver.first_name} {m.driver.last_name}" if m.driver else None,
-                    "driver_phone": m.driver.phone_number if m.driver else None,
-                    "partner_id": str(m.partner_id) if m.partner_id else None,
-                    "partner_name": m.partner.name if m.partner else None,
-                    "pickup_address": m.pickup_address,
-                    "delivery_address": m.delivery_address,
-                    "customer_name": m.customer_name,
-                    "customer_phone": m.customer_phone,
-                    "otp_code": m.otp_code,
-                    "otp_verified": m.otp_verified,
-                    "current_latitude": float(m.current_latitude) if m.current_latitude is not None else None,
-                    "current_longitude": float(m.current_longitude) if m.current_longitude is not None else None,
-                    "assigned_at": m.assigned_at.isoformat() if m.assigned_at else None,
-                    "picked_up_at": m.picked_up_at.isoformat() if m.picked_up_at else None,
-                    "delivered_at": m.delivered_at.isoformat() if m.delivered_at else None,
-                    "notes": m.notes,
-                    "created_at": m.created_at.isoformat(),
-                }
-            )
-
+        results = [_serialize_mission(m, include_otp=True) for m in missions]
         return {"missions": results, "total": len(results)}
 
 
@@ -213,6 +252,8 @@ async def create_mission(
             delivery_zone_id=payload.delivery_zone_id,
             pickup_address=pickup_address,
             delivery_address=delivery_address,
+            destination_latitude=order.delivery_latitude,
+            destination_longitude=order.delivery_longitude,
             customer_name=customer_name,
             customer_phone=customer_phone,
             otp_code=otp_code,
@@ -223,6 +264,21 @@ async def create_mission(
         session.add(mission)
         await session.commit()
         await session.refresh(mission)
+
+        if mission.driver_id and driver and driver.phone_number:
+            try:
+                msg_driver = (
+                    f"🛵 *MaliAgent — Nouvelle course assignée !*\n\n"
+                    f"• Commande : `#{str(mission.order_id)[:8]}`\n"
+                    f"• Retrait : {mission.pickup_address or 'Boutique'}\n"
+                    f"• Destination : {mission.delivery_address}\n"
+                    f"• Client : {mission.customer_name or 'Client'} ({mission.customer_phone or 'N/A'})\n\n"
+                    f"👉 Ouvrez votre cockpit coursier pour démarrer :\n"
+                    f"{settings.public_base_url}/driver"
+                )
+                await send_text_message(to=driver.phone_number, body=msg_driver)
+            except Exception as e:
+                logger.warning(f"Notification WhatsApp coursier échouée: {e}")
 
         return {
             "id": str(mission.id),
@@ -254,30 +310,7 @@ async def get_mission_detail(
         if not mission:
             raise HTTPException(status_code=404, detail="Mission de livraison introuvable")
 
-        return {
-            "id": str(mission.id),
-            "order_id": str(mission.order_id),
-            "status": mission.status.value,
-            "assignment_type": mission.assignment_type.value,
-            "driver_id": str(mission.driver_id) if mission.driver_id else None,
-            "driver_name": f"{mission.driver.first_name} {mission.driver.last_name}" if mission.driver else None,
-            "driver_phone": mission.driver.phone_number if mission.driver else None,
-            "partner_id": str(mission.partner_id) if mission.partner_id else None,
-            "partner_name": mission.partner.name if mission.partner else None,
-            "pickup_address": mission.pickup_address,
-            "delivery_address": mission.delivery_address,
-            "customer_name": mission.customer_name,
-            "customer_phone": mission.customer_phone,
-            "otp_code": mission.otp_code,
-            "otp_verified": mission.otp_verified,
-            "current_latitude": float(mission.current_latitude) if mission.current_latitude is not None else None,
-            "current_longitude": float(mission.current_longitude) if mission.current_longitude is not None else None,
-            "assigned_at": mission.assigned_at.isoformat() if mission.assigned_at else None,
-            "picked_up_at": mission.picked_up_at.isoformat() if mission.picked_up_at else None,
-            "delivered_at": mission.delivered_at.isoformat() if mission.delivered_at else None,
-            "notes": mission.notes,
-            "created_at": mission.created_at.isoformat(),
-        }
+        return _serialize_mission(mission, include_otp=True)
 
 
 @router.patch("/missions/{mission_id}/assign")
@@ -338,6 +371,20 @@ async def assign_mission(
         await session.commit()
         await session.refresh(mission)
 
+        if mission.driver_id and payload.driver_id and driver and driver.phone_number:
+            try:
+                msg_driver = (
+                    f"🛵 *MaliAgent — Course #{str(mission.id)[:8]} assignée !*\n\n"
+                    f"• Commande : `#{str(mission.order_id)[:8]}`\n"
+                    f"• Destination : {mission.delivery_address}\n"
+                    f"• Client : {mission.customer_name or 'Client'} ({mission.customer_phone or 'N/A'})\n\n"
+                    f"👉 Accédez à votre cockpit coursier :\n"
+                    f"{settings.public_base_url}/driver"
+                )
+                await send_text_message(to=driver.phone_number, body=msg_driver)
+            except Exception as e:
+                logger.warning(f"Notification WhatsApp coursier échouée: {e}")
+
         return {
             "id": str(mission.id),
             "status": mission.status.value,
@@ -374,6 +421,8 @@ async def list_drivers(
             {
                 "id": str(d.id),
                 "name": f"{d.first_name} {d.last_name}",
+                "first_name": d.first_name,
+                "last_name": d.last_name,
                 "email": d.email,
                 "phone_number": d.phone_number,
                 "driver_type": d.driver_type.value if d.driver_type else "internal",
@@ -381,6 +430,154 @@ async def list_drivers(
             }
             for d in drivers
         ]
+
+
+@router.post("/drivers", status_code=201)
+async def create_driver(
+    payload: DriverCreateIn,
+    business_id: uuid.UUID = Depends(get_current_business_id),
+):
+    """
+    Crée un nouveau livreur rattaché à la boutique avec son compte d'accès.
+    """
+    clean_first = payload.first_name.strip()
+    clean_last = payload.last_name.strip()
+    clean_phone = re.sub(r"[^0-9+]", "", payload.phone_number.strip())
+
+    if not clean_first or not clean_last:
+        raise HTTPException(status_code=400, detail="Le prénom et le nom sont obligatoires")
+    if not clean_phone:
+        raise HTTPException(status_code=400, detail="Le numéro de téléphone est obligatoire")
+
+    phone_digits = re.sub(r"[^0-9]", "", clean_phone)[-8:]
+    biz_suffix = str(business_id)[:4]
+    clean_email = payload.email.strip().lower() if (payload.email and payload.email.strip()) else None
+    clean_password = payload.password.strip() if (payload.password and payload.password.strip()) else None
+    driver_email = clean_email or f"coursier.{phone_digits}.{biz_suffix}@maliagent.ml"
+    driver_password = clean_password or "MaliCoursier2026!"
+
+    async with async_session() as session:
+        existing = (await session.execute(select(User).where(User.email == driver_email))).scalar_one_or_none()
+        if existing:
+            if not clean_email:
+                driver_email = f"coursier.{phone_digits}.{secrets.token_hex(3)}@maliagent.ml"
+            else:
+                raise HTTPException(status_code=400, detail=f"Un compte avec l'email {driver_email} existe déjà.")
+
+        driver_type = DriverType.INTERNAL if payload.driver_type == "internal" else DriverType.PARTNER
+
+        new_driver = User(
+            business_id=business_id,
+            first_name=clean_first,
+            last_name=clean_last,
+            email=driver_email,
+            password_hash=hash_password(driver_password),
+            phone_number=clean_phone,
+            role=UserRole.LIVREUR,
+            driver_type=driver_type,
+            is_available=True,
+            is_active=True,
+        )
+        session.add(new_driver)
+        await session.commit()
+        await session.refresh(new_driver)
+
+        return {
+            "id": str(new_driver.id),
+            "name": f"{new_driver.first_name} {new_driver.last_name}",
+            "first_name": new_driver.first_name,
+            "last_name": new_driver.last_name,
+            "email": new_driver.email,
+            "phone_number": new_driver.phone_number,
+            "driver_type": new_driver.driver_type.value if new_driver.driver_type else "internal",
+            "is_available": new_driver.is_available,
+            "initial_password": driver_password,
+            "message": "Livreur créé avec succès",
+        }
+
+
+@router.get("/fleet/drivers")
+async def list_fleet_drivers(business_id: uuid.UUID = Depends(get_current_business_id)):
+    return await list_drivers(business_id=business_id)
+
+
+@router.post("/fleet/drivers", status_code=201)
+async def create_fleet_driver(payload: DriverCreateIn, business_id: uuid.UUID = Depends(get_current_business_id)):
+    return await create_driver(payload=payload, business_id=business_id)
+
+
+@router.patch("/drivers/{driver_id}")
+async def update_driver(
+    driver_id: uuid.UUID,
+    payload: DriverUpdateIn,
+    business_id: uuid.UUID = Depends(get_current_business_id),
+):
+    """
+    Modifie les informations d'un livreur ou sa disponibilité depuis le cockpit commerçant.
+    """
+    async with async_session() as session:
+        stmt = select(User).where(
+            User.id == driver_id,
+            User.business_id == business_id,
+            User.role == UserRole.LIVREUR,
+        )
+        driver = (await session.execute(stmt)).scalar_one_or_none()
+        if not driver:
+            raise HTTPException(status_code=404, detail="Livreur introuvable pour cette boutique")
+
+        if payload.first_name is not None:
+            driver.first_name = payload.first_name.strip()
+        if payload.last_name is not None:
+            driver.last_name = payload.last_name.strip()
+        if payload.phone_number is not None:
+            driver.phone_number = payload.phone_number.strip()
+        if payload.driver_type is not None:
+            driver.driver_type = DriverType.INTERNAL if payload.driver_type == "internal" else DriverType.PARTNER
+        if payload.is_available is not None:
+            driver.is_available = payload.is_available
+        if payload.is_active is not None:
+            driver.is_active = payload.is_active
+
+        await session.commit()
+        await session.refresh(driver)
+
+        return {
+            "id": str(driver.id),
+            "name": f"{driver.first_name} {driver.last_name}",
+            "first_name": driver.first_name,
+            "last_name": driver.last_name,
+            "email": driver.email,
+            "phone_number": driver.phone_number,
+            "driver_type": driver.driver_type.value if driver.driver_type else "internal",
+            "is_available": driver.is_available,
+            "is_active": driver.is_active,
+            "message": "Livreur mis à jour avec succès",
+        }
+
+
+@router.delete("/drivers/{driver_id}")
+async def delete_driver(
+    driver_id: uuid.UUID,
+    business_id: uuid.UUID = Depends(get_current_business_id),
+):
+    """
+    Désactive un livreur de la flotte boutique (soft delete).
+    """
+    async with async_session() as session:
+        stmt = select(User).where(
+            User.id == driver_id,
+            User.business_id == business_id,
+            User.role == UserRole.LIVREUR,
+        )
+        driver = (await session.execute(stmt)).scalar_one_or_none()
+        if not driver:
+            raise HTTPException(status_code=404, detail="Livreur introuvable pour cette boutique")
+
+        driver.is_active = False
+        driver.is_available = False
+        await session.commit()
+
+        return {"status": "deleted", "id": str(driver_id), "message": "Livreur désactivé de la flotte"}
 
 
 @router.get("/partners")
@@ -420,14 +617,21 @@ async def create_partner(
     """
     Enregistre un nouveau partenaire de livraison pour la boutique.
     """
+    clean_name = payload.name.strip()
+    clean_phone = re.sub(r"[^0-9+]", "", payload.phone_number.strip())
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Le nom du partenaire est obligatoire")
+    if not clean_phone:
+        raise HTTPException(status_code=400, detail="Le numéro de téléphone est obligatoire")
+
     async with async_session() as session:
         partner = DeliveryPartner(
             business_id=business_id,
-            name=payload.name,
-            contact_name=payload.contact_name,
-            phone_number=payload.phone_number,
-            address=payload.address,
-            notes=payload.notes,
+            name=clean_name,
+            contact_name=payload.contact_name.strip() if payload.contact_name else None,
+            phone_number=clean_phone,
+            address=payload.address.strip() if payload.address else None,
+            notes=payload.notes.strip() if payload.notes else None,
             active=True,
         )
         session.add(partner)
@@ -441,6 +645,16 @@ async def create_partner(
             "contact_name": partner.contact_name,
             "message": "Partenaire de livraison enregistré avec succès",
         }
+
+
+@router.get("/fleet/partners")
+async def list_fleet_partners(business_id: uuid.UUID = Depends(get_current_business_id)):
+    return await list_partners(business_id=business_id)
+
+
+@router.post("/fleet/partners", status_code=201)
+async def create_fleet_partner(payload: CreatePartnerRequest, business_id: uuid.UUID = Depends(get_current_business_id)):
+    return await create_partner(payload=payload, business_id=business_id)
 
 
 # ================= ENDPOINTS LIVREUR MOBILE (SPRINT 10) =================
@@ -468,32 +682,7 @@ async def list_driver_missions(
             stmt = stmt.where(DeliveryMission.status == status)
 
         missions = (await session.execute(stmt)).scalars().all()
-
-        results = []
-        for m in missions:
-            lat = float(m.current_latitude) if m.current_latitude is not None else None
-            lng = float(m.current_longitude) if m.current_longitude is not None else None
-            results.append(
-                {
-                    "id": str(m.id),
-                    "order_id": str(m.order_id),
-                    "status": m.status.value,
-                    "pickup_address": m.pickup_address,
-                    "delivery_address": m.delivery_address,
-                    "customer_name": m.customer_name,
-                    "customer_phone": m.customer_phone,
-                    "otp_verified": m.otp_verified,
-                    "current_latitude": lat,
-                    "current_longitude": lng,
-                    "navigation": build_navigation_links(m.delivery_address, lat, lng),
-                    "assigned_at": m.assigned_at.isoformat() if m.assigned_at else None,
-                    "picked_up_at": m.picked_up_at.isoformat() if m.picked_up_at else None,
-                    "delivered_at": m.delivered_at.isoformat() if m.delivered_at else None,
-                    "notes": m.notes,
-                    "created_at": m.created_at.isoformat(),
-                }
-            )
-
+        results = [_serialize_mission(m, include_otp=False) for m in missions]
         return {"missions": results, "total": len(results)}
 
 
@@ -669,6 +858,79 @@ async def driver_verify_otp(
             "otp_verified": True,
             "delivered_at": mission.delivered_at.isoformat(),
             "message": "Livraison validée avec succès par OTP client",
+        }
+
+
+@router.patch("/driver/availability")
+async def driver_toggle_availability(
+    payload: DriverAvailabilityIn,
+    driver: User = Depends(get_current_driver),
+):
+    """
+    Permet au livreur connecté de basculer son statut En service / En pause en temps réel.
+    """
+    async with async_session() as session:
+        stmt = select(User).where(User.id == driver.id)
+        db_driver = (await session.execute(stmt)).scalar_one_or_none()
+        if not db_driver:
+            raise HTTPException(status_code=404, detail="Livreur introuvable")
+
+        db_driver.is_available = payload.is_available
+        await session.commit()
+        await session.refresh(db_driver)
+
+        return {
+            "status": "updated",
+            "is_available": db_driver.is_available,
+            "message": "Statut de disponibilité mis à jour avec succès",
+        }
+
+
+@router.get("/driver/summary")
+async def driver_get_summary(
+    driver: User = Depends(get_current_driver),
+):
+    """
+    Retourne le récapitulatif journalier du coursier :
+    - Nombre de livraisons réussies
+    - Total espèces encaissé (Cash on delivery) à restituer à la boutique
+    - Nombre de courses actives
+    - Statut de disponibilité actuel
+    """
+    async with async_session() as session:
+        stmt_m = (
+            select(DeliveryMission)
+            .where(
+                DeliveryMission.driver_id == driver.id,
+                DeliveryMission.business_id == driver.business_id,
+            )
+            .options(selectinload(DeliveryMission.order))
+        )
+        missions = (await session.execute(stmt_m)).scalars().all()
+
+        delivered_missions = [m for m in missions if m.status == MissionStatus.DELIVERED]
+        active_missions = [
+            m for m in missions if m.status not in (MissionStatus.DELIVERED, MissionStatus.CANCELLED, MissionStatus.FAILED)
+        ]
+
+        total_cash = 0
+        for m in delivered_missions:
+            if m.order and (m.order.payment_method or "").lower() in (
+                "cash",
+                "cash_on_delivery",
+                "especes",
+                "espèces",
+                "mock",
+            ):
+                total_cash += int(m.order.total_amount or 0)
+
+        return {
+            "driver_name": f"{driver.first_name} {driver.last_name}",
+            "driver_phone": driver.phone_number,
+            "is_available": driver.is_available,
+            "total_delivered_count": len(delivered_missions),
+            "total_cash_collected": total_cash,
+            "active_missions_count": len(active_missions),
         }
 
 

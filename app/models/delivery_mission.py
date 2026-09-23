@@ -78,6 +78,10 @@ class DeliveryMission(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     current_latitude: Mapped[Numeric | None] = mapped_column(Numeric(10, 7), nullable=True)
     current_longitude: Mapped[Numeric | None] = mapped_column(Numeric(10, 7), nullable=True)
 
+    # Géolocalisation de destination exacte du client (V2.2)
+    destination_latitude: Mapped[Numeric | None] = mapped_column(Numeric(10, 7), nullable=True)
+    destination_longitude: Mapped[Numeric | None] = mapped_column(Numeric(10, 7), nullable=True)
+
     # Horodatages de passage
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     picked_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -86,7 +90,7 @@ class DeliveryMission(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relations
-    order = relationship("Order", lazy="selectin")
+    order = relationship("Order", back_populates="delivery_missions", lazy="selectin")
     driver = relationship("User", foreign_keys=[driver_id], lazy="selectin")
     partner = relationship("DeliveryPartner", foreign_keys=[partner_id], back_populates="missions", lazy="selectin")
     delivery_zone = relationship("DeliveryZone", foreign_keys=[delivery_zone_id], lazy="selectin")
