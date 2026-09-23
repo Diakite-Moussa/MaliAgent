@@ -1,0 +1,570 @@
+    <!-- ================= NAVBAR SUPER ADMIN ================= -->
+    <header class="navbar navbar-superadmin">
+      <div class="nav-left">
+        <div class="brand">
+          <div class="brand-logo brand-logo-superadmin">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-name">MaliAgent SaaS</span>
+            <span class="brand-sub brand-sub-superadmin">Cockpit Super Admin</span>
+          </div>
+        </div>
+
+        <div class="platform-badge">
+          <span class="badge-dot"></span>
+          <span>Supervision Multi-Tenant</span>
+        </div>
+      </div>
+
+      <!-- Navigation Onglets Super Admin -->
+      <nav class="nav-tabs">
+        <button 
+          class="tab-btn" 
+          [class.active]="activePlatformTab() === 'overview'" 
+          (click)="activePlatformTab.set('overview')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          Vue Globale
+        </button>
+
+        <button 
+          class="tab-btn" 
+          [class.active]="activePlatformTab() === 'businesses'" 
+          (click)="activePlatformTab.set('businesses')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          Boutiques
+          <span class="badge-count">{{ platformBusinesses().length }}</span>
+        </button>
+
+        <button 
+          class="tab-btn" 
+          [class.active]="activePlatformTab() === 'users'" 
+          (click)="activePlatformTab.set('users')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          Utilisateurs
+          <span class="badge-count">{{ platformUsers().length }}</span>
+        </button>
+
+        <button 
+          class="tab-btn" 
+          [class.active]="activePlatformTab() === 'health'" 
+          (click)="activePlatformTab.set('health')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+          Santé & IA
+        </button>
+
+        <button 
+          class="tab-btn" 
+          [class.active]="activePlatformTab() === 'audit'" 
+          (click)="activePlatformTab.set('audit')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          Audit
+          <span class="badge-count">{{ platformAuditLogs().length }}</span>
+        </button>
+      </nav>
+
+      <div class="nav-right">
+        <div class="status-indicator" [class.online]="backendConnected()">
+          <span class="status-dot"></span>
+          <span class="status-text">{{ backendConnected() ? 'API Connectée' : 'Hors Ligne' }}</span>
+        </div>
+
+        <button class="btn-icon" (click)="loadPlatformAll()" title="Actualiser les métriques">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        </button>
+
+        <div class="user-pill user-pill-superadmin">
+          <div class="user-avatar-circle user-avatar-superadmin">👑</div>
+          <div class="user-meta">
+            <span class="user-meta-email">{{ authService.currentUser()?.email }}</span>
+            <span class="user-meta-role role-superadmin">SUPER ADMIN</span>
+          </div>
+        </div>
+
+        <button class="btn-logout" (click)="logout()" title="Déconnexion">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          <span>Quitter</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ================= CONTENU SUPER ADMIN ================= -->
+    <main class="main-content">
+
+      <!-- Onglet 1 : Vue Globale SaaS -->
+      @if (activePlatformTab() === 'overview') {
+        <div class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Cockpit Plateforme SaaS — MaliAgent</h2>
+              <p class="section-desc">Métriques consolidées et supervision en direct de toutes les boutiques partenaires</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-secondary" (click)="showCreateUserModal.set(true)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+                Nouvel Utilisateur
+              </button>
+              <button class="btn btn-primary" (click)="showCreateBusinessModal.set(true)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Nouvelle Boutique
+              </button>
+            </div>
+          </div>
+
+          <!-- KPI Cards SaaS -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-title">Boutiques Partenaires</span>
+                <div class="kpi-icon icon-indigo">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                </div>
+              </div>
+              <div class="kpi-value">{{ platformStats().businesses.total }}</div>
+              <div class="kpi-sub">
+                <span class="text-success">{{ platformStats().businesses.active }} actives</span> • 
+                <span class="text-danger">{{ platformStats().businesses.suspended }} suspendues</span>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-title">Volume d'Affaires Cumulé (GMV)</span>
+                <div class="kpi-icon icon-emerald">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                </div>
+              </div>
+              <div class="kpi-value text-emerald">{{ formatFcfa(platformStats().orders.total_gmv_fcfa) }}</div>
+              <div class="kpi-sub">Total commandes générées sur la plateforme</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-title">Commandes Traitées</span>
+                <div class="kpi-icon icon-blue">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+                </div>
+              </div>
+              <div class="kpi-value">{{ platformStats().orders.total_count }}</div>
+              <div class="kpi-sub">Conclues automatiquement par l'agent IA</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-title">Trafic & Interactions WhatsApp</span>
+                <div class="kpi-icon icon-purple">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                </div>
+              </div>
+              <div class="kpi-value">{{ platformStats().engagement.total_conversations }}</div>
+              <div class="kpi-sub">
+                <span>{{ platformStats().engagement.total_customers }} acheteurs uniques</span> • 
+                <span class="text-warning">{{ platformStats().engagement.total_handoffs }} handoffs SAV</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Aperçu rapide des boutiques -->
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+              <h3 class="card-title">Dernières Boutiques Enregistrées</h3>
+              <button class="btn-link" (click)="activePlatformTab.set('businesses')">Voir toutes les boutiques →</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Boutique</th>
+                    <th>Numéro WhatsApp</th>
+                    <th>Commandes</th>
+                    <th>Chiffre d'Affaires</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (biz of platformBusinesses().slice(0, 5); track biz.id) {
+                    <tr>
+                      <td class="font-medium text-white">{{ biz.name }}</td>
+                      <td>+{{ biz.whatsapp_phone_number }}</td>
+                      <td><span class="badge badge-gray">{{ biz.orders_count }} cmds</span></td>
+                      <td class="font-bold text-emerald">{{ formatFcfa(biz.total_revenue) }}</td>
+                      <td>
+                        @if (biz.is_active) {
+                          <span class="badge badge-confirmed">Active</span>
+                        } @else {
+                          <span class="badge badge-cancelled">Suspendue</span>
+                        }
+                      </td>
+                      <td>
+                        <button class="btn-sm btn-outline" (click)="inspectBusiness(biz)">
+                          👁️ Inspecter
+                        </button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Onglet 2 : Boutiques & Entreprises -->
+      @if (activePlatformTab() === 'businesses') {
+        <div class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Gestion des Entreprises Partenaires</h2>
+              <p class="section-desc">Provisionnez, auditez et activez les commerçants partenaires sur MaliAgent</p>
+            </div>
+            <button class="btn btn-primary" (click)="showCreateBusinessModal.set(true)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Nouvelle Boutique
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nom Entreprise</th>
+                    <th>Ligne WhatsApp</th>
+                    <th>Devise</th>
+                    <th>Commandes</th>
+                    <th>Chiffre d'affaires</th>
+                    <th>Produits</th>
+                    <th>Utilisateurs</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (biz of platformBusinesses(); track biz.id) {
+                    <tr>
+                      <td class="font-bold text-white">{{ biz.name }}</td>
+                      <td>+{{ biz.whatsapp_phone_number }}</td>
+                      <td>{{ biz.currency }}</td>
+                      <td><b>{{ biz.orders_count }}</b></td>
+                      <td class="text-emerald font-bold">{{ formatFcfa(biz.total_revenue) }}</td>
+                      <td>{{ biz.products_count }}</td>
+                      <td>{{ biz.users_count }}</td>
+                      <td>
+                        @if (biz.is_active) {
+                          <span class="badge badge-confirmed">Active</span>
+                        } @else {
+                          <span class="badge badge-cancelled">Suspendue</span>
+                        }
+                      </td>
+                      <td>
+                        <div class="action-btn-group">
+                          <button class="btn-sm btn-primary" (click)="inspectBusiness(biz)" title="Inspecter le dashboard de cette boutique">
+                            👁️ Inspecter
+                          </button>
+                          <button 
+                            class="btn-sm" 
+                            [class.btn-outline]="biz.is_active" 
+                            [class.btn-secondary]="!biz.is_active" 
+                            (click)="toggleBusinessStatus(biz)">
+                            {{ biz.is_active ? 'Suspendre' : 'Réactiver' }}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Onglet 3 : Utilisateurs Plateforme -->
+      @if (activePlatformTab() === 'users') {
+        <div class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Gestion des Utilisateurs</h2>
+              <p class="section-desc">Comptes commerçants, vendeurs, opérateurs SAV et administrateurs</p>
+            </div>
+            <button class="btn btn-primary" (click)="showCreateUserModal.set(true)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Nouvel Utilisateur
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Utilisateur</th>
+                    <th>Nom Complet</th>
+                    <th>Rôle</th>
+                    <th>Boutique Assignée</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (u of platformUsers(); track u.id) {
+                    <tr>
+                      <td class="font-medium text-white">{{ u.email }}</td>
+                      <td>{{ u.first_name }} {{ u.last_name }}</td>
+                      <td>
+                        @if (u.role === 'super_admin') {
+                          <span class="badge badge-superadmin">Super Admin</span>
+                        } @else if (u.role === 'admin') {
+                          <span class="badge badge-confirmed">Propriétaire</span>
+                        } @else {
+                          <span class="badge badge-gray">{{ u.role }}</span>
+                        }
+                      </td>
+                      <td>
+                        {{ u.business_name || (u.role === 'super_admin' ? 'Toute la plateforme' : 'Non assigné') }}
+                      </td>
+                      <td>
+                        @if (u.is_active) {
+                          <span class="badge badge-confirmed">Actif</span>
+                        } @else {
+                          <span class="badge badge-cancelled">Désactivé</span>
+                        }
+                      </td>
+                      <td>
+                        <button 
+                          class="btn-sm btn-outline" 
+                          (click)="toggleUserStatus(u)">
+                          {{ u.is_active ? 'Désactiver' : 'Activer' }}
+                        </button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Onglet 4 : Supervision & Santé IA -->
+      @if (activePlatformTab() === 'health') {
+        <div class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Supervision Technique & Monitoring IA</h2>
+              <p class="section-desc">Statut d'exécution des micro-composants et de la couche conversationnelle</p>
+            </div>
+            <button class="btn btn-secondary" (click)="loadPlatformHealth()">
+              Actualiser le diagnostic
+            </button>
+          </div>
+
+          <div class="cards-grid-2x2">
+            <div class="card health-card">
+              <div class="health-header">
+                <span class="health-icon">⚡</span>
+                <div>
+                  <h4 class="card-title">Backend API FastAPI</h4>
+                  <p class="card-subtitle">Version {{ platformHealth()?.components?.api?.version }} • Mode {{ platformHealth()?.components?.api?.environment }}</p>
+                </div>
+                <span class="badge badge-confirmed">Opérationnel</span>
+              </div>
+              <p class="health-desc">Endpoints REST, middleware CORS sécurisé, rate-limiting Nginx actif.</p>
+            </div>
+
+            <div class="card health-card">
+              <div class="health-header">
+                <span class="health-icon">🗄️</span>
+                <div>
+                  <h4 class="card-title">Base de Données Relationnelle</h4>
+                  <p class="card-subtitle">{{ platformHealth()?.components?.database?.engine }}</p>
+                </div>
+                <span class="badge" [class.badge-confirmed]="platformHealth()?.components?.database?.status === 'connected'" [class.badge-cancelled]="platformHealth()?.components?.database?.status !== 'connected'">
+                  {{ platformHealth()?.components?.database?.status === 'connected' ? 'Connectée' : 'Erreur' }}
+                </span>
+              </div>
+              <p class="health-desc">Isolation multi-tenant avec index par business_id et intégrité référentielle.</p>
+            </div>
+
+            <div class="card health-card">
+              <div class="health-header">
+                <span class="health-icon">🤖</span>
+                <div>
+                  <h4 class="card-title">Provider LLM (Ollama Cloud)</h4>
+                  <p class="card-subtitle">Modèle : {{ platformHealth()?.components?.llm_provider?.model }}</p>
+                </div>
+                <span class="badge" [class.badge-confirmed]="platformHealth()?.components?.llm_provider?.configured" [class.badge-cancelled]="!platformHealth()?.components?.llm_provider?.configured">
+                  {{ platformHealth()?.components?.llm_provider?.configured ? 'Clé API Active' : 'Non configuré' }}
+                </span>
+              </div>
+              <p class="health-desc">Orchestration multi-tours, détection d'intention et Tool Calling déterministe.</p>
+            </div>
+
+            <div class="card health-card">
+              <div class="health-header">
+                <span class="health-icon">💬</span>
+                <div>
+                  <h4 class="card-title">Canal WhatsApp Meta Cloud API</h4>
+                  <p class="card-subtitle">Phone Number ID : {{ platformHealth()?.components?.whatsapp_meta?.phone_number_id }}</p>
+                </div>
+                <span class="badge" [class.badge-confirmed]="platformHealth()?.components?.whatsapp_meta?.configured" [class.badge-cancelled]="!platformHealth()?.components?.whatsapp_meta?.configured">
+                  {{ platformHealth()?.components?.whatsapp_meta?.configured ? 'Sécurisé HMAC' : 'Non configuré' }}
+                </span>
+              </div>
+              <p class="health-desc">Vérification cryptographique HMAC-SHA256 de chaque message entrant.</p>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Onglet 5 : Journal d'Audit & Traçabilité -->
+      @if (activePlatformTab() === 'audit') {
+        <div class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Journal d'Audit & Traçabilité</h2>
+              <p class="section-desc">Historique immuable de toutes les actions sensibles du Super Admin et du système</p>
+            </div>
+            <button class="btn btn-secondary" (click)="loadPlatformAuditLogs()">
+              Actualiser le journal
+            </button>
+          </div>
+
+          <div class="card table-card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Date & Heure</th>
+                    <th>Action</th>
+                    <th>Cible</th>
+                    <th>Détails</th>
+                    <th>Adresse IP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @if (platformAuditLogs().length === 0) {
+                    <tr>
+                      <td colspan="5" class="empty-cell">Aucun événement d'audit enregistré pour le moment.</td>
+                    </tr>
+                  }
+                  @for (log of platformAuditLogs(); track log.id) {
+                    <tr>
+                      <td class="font-mono text-sm">{{ log.created_at }}</td>
+                      <td>
+                        <span class="badge" 
+                          [class.badge-confirmed]="log.action.includes('CREATE') || log.action.includes('ACTIVATE')" 
+                          [class.badge-cancelled]="log.action.includes('SUSPEND') || log.action.includes('DISABLE')"
+                          [class.badge-pending]="log.action.includes('IMPERSONATE')">
+                          {{ log.action }}
+                        </span>
+                      </td>
+                      <td>
+                        <span class="font-mono text-xs">{{ log.resource_type }} : {{ log.resource_id || 'N/A' }}</span>
+                      </td>
+                      <td class="text-sm">
+                        @if (log.details?.name) { <strong>{{ log.details.name }}</strong> }
+                        @if (log.details?.email) { <span>{{ log.details.email }}</span> }
+                        @if (log.details?.business_name) { <span>Inspection de <strong>{{ log.details.business_name }}</strong></span> }
+                      </td>
+                      <td class="font-mono text-xs text-muted">{{ log.ip_address || '127.0.0.1' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      }
+
+    </main>
+
+    <!-- Modale Création Entreprise Super Admin -->
+    @if (showCreateBusinessModal()) {
+      <div class="modal-backdrop" (click)="showCreateBusinessModal.set(false)">
+        <div class="modal-card" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Provisionner une nouvelle Boutique</h3>
+            <button class="btn-close" (click)="showCreateBusinessModal.set(false)">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>Nom Commercial</label>
+              <input type="text" [(ngModel)]="newBusiness.name" placeholder="ex. Électro Bamako Express" />
+            </div>
+            <div class="form-group">
+              <label>Numéro WhatsApp Business (Format international sans +)</label>
+              <input type="text" [(ngModel)]="newBusiness.whatsapp_phone_number" placeholder="ex. 22370000000" />
+            </div>
+            <div class="form-group">
+              <label>Devise</label>
+              <input type="text" [(ngModel)]="newBusiness.currency" placeholder="XOF" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline" (click)="showCreateBusinessModal.set(false)">Annuler</button>
+            <button class="btn btn-primary" (click)="submitNewBusiness()">Créer l'entreprise</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Modale Création Utilisateur Super Admin -->
+    @if (showCreateUserModal()) {
+      <div class="modal-backdrop" (click)="showCreateUserModal.set(false)">
+        <div class="modal-card" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Créer un Compte Utilisateur</h3>
+            <button class="btn-close" (click)="showCreateUserModal.set(false)">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>Adresse Email</label>
+              <input type="email" [(ngModel)]="newUser.email" placeholder="commercant@boutique.ml" />
+            </div>
+            <div class="form-group">
+              <label>Mot de passe temporaire</label>
+              <input type="password" [(ngModel)]="newUser.password" placeholder="••••••••" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Prénom</label>
+                <input type="text" [(ngModel)]="newUser.first_name" placeholder="Moussa" />
+              </div>
+              <div class="form-group">
+                <label>Nom</label>
+                <input type="text" [(ngModel)]="newUser.last_name" placeholder="Diarra" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Rôle de l'utilisateur</label>
+              <select [(ngModel)]="newUser.role">
+                <option value="admin">Administrateur / Propriétaire Boutique</option>
+                <option value="vendeur">Vendeur / Gestionnaire Produits</option>
+                <option value="operateur">Opérateur Support WhatsApp</option>
+                <option value="super_admin">Super Administrateur Plateforme</option>
+              </select>
+            </div>
+            @if (newUser.role !== 'super_admin') {
+              <div class="form-group">
+                <label>Boutique associée</label>
+                <select [(ngModel)]="newUser.business_id">
+                  <option value="">Sélectionner une boutique...</option>
+                  @for (biz of platformBusinesses(); track biz.id) {
+                    <option [value]="biz.id">{{ biz.name }} (+{{ biz.whatsapp_phone_number }})</option>
+                  }
+                </select>
+              </div>
+            }
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline" (click)="showCreateUserModal.set(false)">Annuler</button>
+            <button class="btn btn-primary" (click)="submitNewUser()">Créer le compte</button>
+          </div>
+        </div>
+      </div>
+    }
+

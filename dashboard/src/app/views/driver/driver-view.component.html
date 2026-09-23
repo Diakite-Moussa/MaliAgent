@@ -1,0 +1,267 @@
+    <div class="driver-mobile-container">
+      
+      <!-- Barre Supérieure Livreur -->
+      <header class="driver-header">
+        <div class="driver-brand">
+          <div class="driver-logo">🛵</div>
+          <div>
+            <h1 class="driver-title">MaliAgent Coursier</h1>
+            <button 
+              class="driver-status-badge" 
+              style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 4px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+              (click)="toggleAvailability()"
+              [disabled]="isTogglingAvailability()"
+              [title]="driverSummary()?.is_available !== false ? 'Cliquer pour passer en pause' : 'Cliquer pour reprendre le service'">
+              <span class="status-pulse" [style.background]="driverSummary()?.is_available !== false ? '#10B981' : '#F59E0B'"></span>
+              <span style="font-weight: 600; font-size: 0.8rem; color: #F8FAFC;">
+                {{ driverSummary()?.is_available !== false ? '🟢 En service' : '⏸ En pause' }} &bull; Bamako
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div class="driver-actions">
+          <button class="btn-driver-icon" (click)="loadDriverMissions()" title="Actualiser les courses">
+            🔄
+          </button>
+          <button class="btn-driver-icon btn-driver-logout" (click)="authService.logout()" title="Déconnexion">
+            🚪
+          </button>
+        </div>
+      </header>
+
+      <!-- Onglets Tactiles Livreur -->
+      <nav class="driver-tabs">
+        <button 
+          class="driver-tab-btn" 
+          [class.active]="driverTab() === 'active'"
+          (click)="driverTab.set('active')">
+          🛵 Courses en cours
+          @if (activeDriverMissions().length > 0) {
+            <span class="driver-badge-count">{{ activeDriverMissions().length }}</span>
+          }
+        </button>
+
+        <button 
+          class="driver-tab-btn" 
+          [class.active]="driverTab() === 'history'"
+          (click)="driverTab.set('history')">
+          ✅ Historique
+          <span class="driver-badge-count">{{ completedDriverMissions().length }}</span>
+        </button>
+      </nav>
+
+      <!-- Contenu Principal Livreur -->
+      <main class="driver-main-content">
+
+        <!-- Onglet 1 : Courses actives -->
+        @if (driverTab() === 'active') {
+          @if (activeDriverMissions().length === 0) {
+            <div class="driver-empty-state">
+              <div class="empty-icon">☕</div>
+              <h3>Aucune course en cours</h3>
+              <p>Vous n'avez aucune livraison en attente pour le moment. Restez connecté !</p>
+              <button class="btn btn-primary" (click)="loadDriverMissions()">Vérifier les nouvelles courses</button>
+            </div>
+          } @else {
+            <div class="driver-missions-list">
+              @for (m of activeDriverMissions(); track m.id) {
+                <div class="driver-mission-card">
+                  
+                  <!-- Entête de mission -->
+                  <div class="mission-card-header">
+                    <span class="mission-order-ref">Commande #{{ m.order_id.substring(0, 8) }}</span>
+                    <span class="mission-status-pill" [class]="'status-' + m.status">
+                      @switch (m.status) {
+                        @case ('pending') { ⏳ En attente }
+                        @case ('assigned') { 👤 Assignée }
+                        @case ('picked_up') { 📦 Colis récupéré }
+                        @case ('in_transit') { 🛵 En route }
+                        @default { {{ m.status }} }
+                      }
+                    </span>
+                  </div>
+
+                  <!-- Trajet / Adresses -->
+                  <div class="mission-addresses">
+                    <div class="address-step">
+                      <span class="step-dot pickup-dot"></span>
+                      <div>
+                        <span class="step-label">Départ (Boutique)</span>
+                        <p class="step-val">{{ m.pickup_address }}</p>
+                      </div>
+                    </div>
+
+                    <div class="address-step">
+                      <span class="step-dot delivery-dot"></span>
+                      <div>
+                        <span class="step-label">Destination Client</span>
+                        <p class="step-val highlight-address">{{ m.delivery_address }}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Infos Client & Bouton d'appel 1-Clic -->
+                  <div class="mission-customer-box">
+                    <div class="customer-info">
+                      <span class="customer-name">{{ m.customer_name || 'Client WhatsApp' }}</span>
+                      <span class="customer-phone">{{ m.customer_phone }}</span>
+                    </div>
+                    @if (m.customer_phone) {
+                      <a [href]="'tel:' + m.customer_phone" class="btn-action btn-call">
+                        📞 Appeler le client
+                      </a>
+                    }
+                  </div>
+
+                  <!-- Navigation GPS 1-Clic -->
+                  <div class="mission-navigation-box">
+                    <span class="nav-title">Lancer le GPS vers le quartier :</span>
+                    <div class="nav-buttons-row">
+                      <a [href]="m.navigation.google_maps" target="_blank" class="btn-nav btn-google-maps">
+                        🗺️ Google Maps
+                      </a>
+                      <a [href]="m.navigation.waze" target="_blank" class="btn-nav btn-waze">
+                        🚗 Waze
+                      </a>
+                    </div>
+                  </div>
+
+                  <!-- Actions du Cycle de Vie -->
+                  <div class="mission-workflow-actions">
+                    @if (m.status === 'pending' || m.status === 'assigned') {
+                      <button class="btn-workflow btn-pickup" (click)="pickupMission(m)">
+                        📦 Colis récupéré en boutique
+                      </button>
+                    }
+
+                    @if (m.status === 'picked_up') {
+                      <button class="btn-workflow btn-start-route" (click)="startRouteMission(m)">
+                        🛵 Partir en route vers le client
+                      </button>
+                    }
+
+                    @if (m.status === 'in_transit') {
+                      <button class="btn-workflow btn-location" (click)="updateGpsLocation(m)">
+                        📍 Actualiser ma position GPS
+                      </button>
+                      <button class="btn-workflow btn-validate-otp" (click)="openOtpModal(m)">
+                        🔑 Valider la livraison (Code OTP)
+                      </button>
+                    }
+                  </div>
+
+                </div>
+              }
+            </div>
+          }
+        }
+
+        <!-- Onglet 2 : Historique des courses terminées -->
+        @if (driverTab() === 'history') {
+          <div class="driver-summary-cards" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+            <div class="card" style="padding: 0.85rem; text-align: center; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px;">
+              <div style="font-size: 0.75rem; color: #94A3B8; margin-bottom: 0.25rem;">Courses Livrées</div>
+              <div style="font-size: 1.5rem; font-weight: 800; color: #10B981;">
+                {{ driverSummary()?.total_delivered_count ?? completedDriverMissions().length }}
+              </div>
+            </div>
+            <div class="card" style="padding: 0.85rem; text-align: center; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px;">
+              <div style="font-size: 0.75rem; color: #94A3B8; margin-bottom: 0.25rem;">Espèces Encaissées</div>
+              <div style="font-size: 1.05rem; font-weight: 800; color: #F59E0B;">
+                {{ formatFcfa(driverSummary()?.total_cash_collected) }}
+              </div>
+            </div>
+          </div>
+
+          @if (completedDriverMissions().length === 0) {
+            <div class="driver-empty-state">
+              <div class="empty-icon">📜</div>
+              <h3>Aucune course terminée</h3>
+              <p>Vos livraisons validées par code OTP apparaîtront ici.</p>
+            </div>
+          } @else {
+            <div class="driver-missions-list">
+              @for (m of completedDriverMissions(); track m.id) {
+                <div class="driver-mission-card mission-card-completed">
+                  <div class="mission-card-header">
+                    <span class="mission-order-ref">Commande #{{ m.order_id.substring(0, 8) }}</span>
+                    <span class="mission-status-pill status-delivered">✓ Livré avec succès</span>
+                  </div>
+                  <p class="history-address">📍 {{ m.delivery_address }}</p>
+                  <div class="history-meta">
+                    <span>Client : {{ m.customer_name || 'Client' }} ({{ m.customer_phone }})</span>
+                    <span>Code OTP vérifié &bull; {{ m.delivered_at ? (m.delivered_at | date:'short') : 'Aujourd\'hui' }}</span>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        }
+
+      </main>
+
+      <!-- ================= MODALE PAVÉ TACTILE OTP ================= -->
+      @if (selectedMissionForOtp()) {
+        <div class="otp-modal-backdrop" (click)="closeOtpModal()">
+          <div class="otp-modal-card" (click)="$event.stopPropagation()">
+            
+            <div class="otp-modal-header">
+              <h3>Validation de Livraison</h3>
+              <button class="btn-close-modal" (click)="closeOtpModal()">✕</button>
+            </div>
+
+            <p class="otp-instructions">
+              Demandez le <b>Code secret à 6 chiffres</b> reçu par le client sur WhatsApp pour valider la remise du colis.
+            </p>
+
+            <!-- Affichage des 6 cases OTP -->
+            <div class="otp-display-row">
+              @for (idx of [0,1,2,3,4,5]; track idx) {
+                <div class="otp-digit-box" [class.filled]="otpInput().length > idx">
+                  {{ otpInput().charAt(idx) || '•' }}
+                </div>
+              }
+            </div>
+
+            <!-- Message d'erreur éventuel -->
+            @if (otpError()) {
+              <div class="otp-error-banner">
+                ⚠️ {{ otpError() }}
+              </div>
+            }
+
+            <!-- Pavé Numérique Tactile (3x4) -->
+            <div class="otp-keypad">
+              <button class="keypad-btn" (click)="appendOtpDigit('1')">1</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('2')">2</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('3')">3</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('4')">4</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('5')">5</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('6')">6</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('7')">7</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('8')">8</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('9')">9</button>
+              <button class="keypad-btn keypad-delete" (click)="deleteOtpDigit()">⌫</button>
+              <button class="keypad-btn" (click)="appendOtpDigit('0')">0</button>
+              <button class="keypad-btn keypad-clear" (click)="clearOtpInput()">C</button>
+            </div>
+
+            <!-- Bouton de confirmation -->
+            <button 
+              class="btn-submit-otp" 
+              [disabled]="otpInput().length !== 6 || isVerifyingOtp()"
+              (click)="submitOtpVerification()">
+              @if (isVerifyingOtp()) {
+                Vérification en cours...
+              } @else {
+                ✓ Confirmer la remise du colis
+              }
+            </button>
+
+          </div>
+        </div>
+      }
+
+    </div>
+

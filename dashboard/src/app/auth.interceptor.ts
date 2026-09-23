@@ -3,20 +3,25 @@ import { inject } from '@angular/core';
 import { AuthService } from './auth.service';
 import { catchError, throwError } from 'rxjs';
 
+/**
+ * Intercepteur HTTP gérant l'architecture d'authentification hybride :
+ * 1. withCredentials = true : transmet automatiquement le cookie HttpOnly 'access_token' sécurisé.
+ * 2. Authorization Bearer : injecté pour les sessions d'impersonation (Super Admin) ou API clients.
+ */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const authService = inject(AuthService);
   const token = authService.getToken();
 
-  let authReq = req;
-
-  // Attacher le token JWT à toutes les requêtes protégées sauf /api/auth/login
+  // On active systématiquement withCredentials pour envoyer les cookies de session HttpOnly
+  const headers: Record<string, string> = {};
   if (token && !req.url.includes('/api/auth/login')) {
-    authReq = req.clone({
-      setHeaders: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    headers['Authorization'] = `Bearer ${token}`;
   }
+
+  const authReq = req.clone({
+    withCredentials: true,
+    setHeaders: headers,
+  });
 
   return next(authReq).pipe(
     catchError((error: HttpErrorResponse) => {
