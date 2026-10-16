@@ -99,6 +99,17 @@
           <span class="badge-count badge-alert">{{ kpis().pending_handoffs_count }}</span>
         }
       </button>
+
+      <button
+        class="tab-btn"
+        [class.active]="activeTab() === 'agent'"
+        (click)="activeTab.set('agent'); loadAgentConfig()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path><circle cx="19" cy="9" r="2" fill="currentColor" stroke="none" opacity="0.7"></circle></svg>
+        Mon Agent IA
+        @if (agentConfig() && !agentConfig()!.enabled) {
+          <span class="badge-count badge-alert" title="Agent IA désactivé">OFF</span>
+        }
+      </button>
     </nav>
 
     <div class="nav-right">
@@ -365,59 +376,164 @@
     <!-- ========== ONGLET 3 : PRODUITS & STOCK ========== -->
     @if (activeTab() === 'products') {
       <div class="tab-pane">
-        <div class="controls-bar">
+        <!-- Barre de filtres par catégorie -->
+        <div class="category-filter-bar">
+          <button 
+            class="cat-pill" 
+            [class.active]="selectedCategoryFilter() === 'all'"
+            (click)="selectedCategoryFilter.set('all')">
+            Tous les produits ({{ products().length }})
+          </button>
+          @for (c of categories(); track c.id) {
+            <button 
+              class="cat-pill" 
+              [class.active]="selectedCategoryFilter() === c.id || selectedCategoryFilter().toLowerCase() === c.name.toLowerCase()"
+              (click)="selectedCategoryFilter.set(c.id)">
+              {{ c.name }} <span class="cat-pill-count">{{ c.product_count }}</span>
+            </button>
+          }
+          <button class="btn btn-outline btn-sm btn-new-cat" (click)="openAddCategoryModal()" title="Créer une nouvelle catégorie formelle">
+            + Nouvelle catégorie
+          </button>
+        </div>
+
+        <div class="controls-bar" style="margin-top: 1rem;">
           <div class="search-box">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <input 
               type="text" 
-              placeholder="Rechercher un produit par nom ou catégorie..."
+              placeholder="Rechercher un produit ou déclinaison (ex. 128Go, Rouge, XL)..."
               [ngModel]="productSearchQuery()"
               (ngModelChange)="productSearchQuery.set($event)"
             />
           </div>
 
-          <button class="btn btn-primary" (click)="showAddProductModal.set(true)">
-            + Ajouter un produit
-          </button>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-primary" (click)="showAddProductModal.set(true)">
+              + Ajouter un produit
+            </button>
+          </div>
         </div>
 
         <div class="table-card">
           <table class="data-table">
             <thead>
               <tr>
+                <th style="width:68px">Visuel</th>
                 <th>Produit</th>
                 <th>Catégorie</th>
                 <th>Prix Unitaire</th>
-                <th>Stock Actuel</th>
+                <th>Stock Global</th>
                 <th>Ajustement Rapide</th>
+                <th style="width:110px; text-align:center;">Actions</th>
               </tr>
             </thead>
             <tbody>
               @for (p of filteredProducts(); track p.id) {
                 <tr>
-                  <td><b>{{ p.name }}</b></td>
-                  <td><span class="category-tag">{{ p.category }}</span></td>
-                  <td><span class="price-val">{{ formatFcfa(p.price) }}</span></td>
                   <td>
-                    <span 
+                    @if (p.image_url) {
+                      <img [src]="getProductImageUrl(p.image_url)" [alt]="p.name" class="product-thumb" />
+                    } @else {
+                      <div class="product-thumb-placeholder" title="Aucune photo">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                      </div>
+                    }
+                  </td>
+                  <td>
+                    <b>{{ p.name }}</b>
+                    @if (p.has_variants) {
+                      <div style="margin-top: 0.35rem;">
+                        <button 
+                          type="button" 
+                          class="variant-toggle-btn" 
+                          [class.expanded]="isProductExpanded(p.id)"
+                          (click)="toggleProductExpand(p.id)">
+                          <span>🏷️ {{ p.variants?.length || 0 }} déclinaisons</span>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                      </div>
+                    }
+                  </td>
+                  <td><span class="category-tag">{{ p.category }}</span></td>
+                  <td>
+                    <span class="price-val">
+                      {{ p.has_variants ? 'Dès ' : '' }}{{ formatFcfa(p.price) }}
+                    </span>
+                  </td>
+                  <td>
+                    <span
                       class="stock-badge"
                       [class.stock-out]="p.stock_quantity === 0"
                       [class.stock-low]="p.stock_quantity > 0 && p.stock_quantity <= 3"
                       [class.stock-ok]="p.stock_quantity > 3">
-                      {{ p.stock_quantity === 0 ? 'RUPTURE' : p.stock_quantity + ' en stock' }}
+                      {{ p.stock_quantity === 0 ? 'RUPTURE' : p.stock_quantity + (p.has_variants ? ' (total)' : ' en stock') }}
                     </span>
                   </td>
                   <td>
-                    <div class="quick-stock-controls">
-                      <button class="btn-counter" (click)="quickAdjustStock(p, -1)" title="Diminuer stock">-1</button>
-                      <button class="btn-counter" (click)="quickAdjustStock(p, +1)" title="Augmenter stock">+1</button>
-                      <button class="btn-counter btn-counter-boost" (click)="quickAdjustStock(p, +5)" title="Réapprovisionner +5">+5</button>
-                    </div>
+                    @if (!p.has_variants) {
+                      <div class="quick-stock-controls">
+                        <button class="btn-counter" (click)="quickAdjustStock(p, -1)" title="Diminuer stock">-1</button>
+                        <button class="btn-counter" (click)="quickAdjustStock(p, +1)" title="Augmenter stock">+1</button>
+                        <button class="btn-counter btn-counter-boost" (click)="quickAdjustStock(p, +5)" title="Réapprovisionner +5">+5</button>
+                      </div>
+                    } @else {
+                      <span style="font-size:0.8rem; color:rgba(255,255,255,0.5);">
+                        Ajuster par variante ci-dessous ⤵
+                      </span>
+                    }
+                  </td>
+                  <td style="text-align:center;">
+                    <button class="btn-edit-product" (click)="openEditProductModal(p)" title="Modifier les informations du produit">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                      Modifier
+                    </button>
                   </td>
                 </tr>
+
+                <!-- Sous-ligne dépliée pour les variantes de produit -->
+                @if (p.has_variants && isProductExpanded(p.id)) {
+                  <tr class="variant-subrow">
+                    <td colspan="7">
+                      <div class="variants-container">
+                        <div class="variants-title">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                          Déclinaisons actives pour <b>{{ p.name }}</b> :
+                        </div>
+                        <div class="variants-grid">
+                          @for (v of p.variants; track v.id || v.value) {
+                            <div class="variant-item-card">
+                              <div class="variant-item-header">
+                                <span class="variant-name-badge">{{ v.name }}</span>
+                                <b class="variant-value">{{ v.value }}</b>
+                              </div>
+                              <div class="variant-item-body">
+                                <div class="variant-price">
+                                  {{ v.price ? formatFcfa(v.price) : formatFcfa(p.price) }}
+                                </div>
+                                <span 
+                                  class="stock-badge"
+                                  [class.stock-out]="v.stock_quantity === 0"
+                                  [class.stock-low]="v.stock_quantity > 0 && v.stock_quantity <= 3"
+                                  [class.stock-ok]="v.stock_quantity > 3">
+                                  {{ v.stock_quantity === 0 ? 'RUPTURE' : v.stock_quantity + ' dispo' }}
+                                </span>
+                              </div>
+                              <div class="quick-stock-controls" style="margin-top:0.5rem; justify-content:center;">
+                                <button class="btn-counter" (click)="quickAdjustVariantStock(p, v, -1)" title="Diminuer stock variante">-1</button>
+                                <button class="btn-counter" (click)="quickAdjustVariantStock(p, v, +1)" title="Augmenter stock variante">+1</button>
+                                <button class="btn-counter btn-counter-boost" (click)="quickAdjustVariantStock(p, v, +5)" title="Réapprovisionner variante +5">+5</button>
+                              </div>
+                            </div>
+                          }
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                }
               } @empty {
                 <tr>
-                  <td colspan="5" class="text-center empty-state">Aucun produit trouvé.</td>
+                  <td colspan="7" class="text-center empty-state">Aucun produit trouvé.</td>
                 </tr>
               }
             </tbody>
@@ -1047,16 +1163,272 @@
             </table>
           </div>
         </div>
-
       </div>
     }
 
-  </main>
+      <!-- ========== ONGLET : MON AGENT IA ========== -->
+      @if (activeTab() === 'agent') {
+        <div class="tab-pane">
+
+          <!-- En-tête section -->
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">🤖 Mon Agent IA</h2>
+              <p class="section-desc">Personnalisez le comportement, le ton et les règles de votre assistant commercial WhatsApp</p>
+            </div>
+            <button class="btn btn-secondary" (click)="loadAgentConfig()" title="Recharger la configuration">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              Actualiser
+            </button>
+          </div>
+
+          <!-- Statut global -->
+          <div class="agent-status-banner" [class.agent-enabled]="agentForm.enabled" [class.agent-disabled]="!agentForm.enabled">
+            <div class="agent-status-icon">
+              @if (agentForm.enabled) {
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+              } @else {
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
+              }
+            </div>
+            <div class="agent-status-text">
+              <span class="agent-status-title">
+                {{ agentForm.enabled ? 'Agent IA actif — répond automatiquement sur WhatsApp' : 'Agent IA en pause — les clients seront dirigés vers votre équipe' }}
+              </span>
+              <span class="agent-status-sub">
+                {{ agentForm.enabled ? 'Votre assistant ' + agentForm.agent_name + ' traite les messages entrants en temps réel.' : "Activez l'interrupteur pour rétablir les réponses automatiques." }}
+              </span>
+            </div>
+            <div class="agent-toggle-wrapper">
+              <span class="toggle-label">{{ agentForm.enabled ? 'Actif' : 'En pause' }}</span>
+              <button
+                class="switch-toggle"
+                [class.on]="agentForm.enabled"
+                (click)="toggleAgentEnabled()"
+                [title]="agentForm.enabled ? 'Désactiver l\'agent IA' : 'Activer l\'agent IA'"
+                id="agent-enabled-toggle">
+                <span class="switch-knob"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Grille de configuration -->
+          <div class="agent-config-grid">
+            <!-- Carte : Identité -->
+            <div class="agent-config-card">
+              <div class="agent-card-header">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path></svg>
+                <span>Identité de l'assistant</span>
+              </div>
+              <div class="form-group">
+                <label for="agent-name-input">Nom de l'agent</label>
+                <input id="agent-name-input" type="text" [(ngModel)]="agentForm.agent_name" placeholder="ex. Moussa AI, Djoliba Assistant…" maxlength="100" />
+                <span class="field-hint">Ce nom sera utilisé par l'assistant pour se présenter aux clients.</span>
+              </div>
+              <div class="form-group">
+                <label>Langue de prédilection</label>
+                <div class="lang-selector">
+                  <button class="lang-btn" [class.selected]="agentForm.default_language === 'fr'" (click)="setLanguage('fr')" id="lang-fr-btn">🇫🇷 Français</button>
+                  <button class="lang-btn" [class.selected]="agentForm.default_language === 'bm'" (click)="setLanguage('bm')" id="lang-bm-btn">🇲🇱 Bambara</button>
+                </div>
+                <span class="field-hint">Langue utilisée par défaut si le client ne donne pas d'indication linguistique.</span>
+              </div>
+            </div>
+
+            <!-- Carte : Ton -->
+            <div class="agent-config-card">
+              <div class="agent-card-header">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                <span>Ton &amp; Style de communication</span>
+              </div>
+              <div class="tone-selector-grid">
+                <button class="tone-card" [class.selected]="agentForm.tone === 'chaleureux'" (click)="setTone('chaleureux')" id="tone-chaleureux-btn">
+                  <span class="tone-emoji">😊</span>
+                  <span class="tone-name">Chaleureux &amp; Vendeur</span>
+                  <span class="tone-desc">Accueillant, enthousiaste — idéal pour fidéliser</span>
+                </button>
+                <button class="tone-card" [class.selected]="agentForm.tone === 'formel'" (click)="setTone('formel')" id="tone-formel-btn">
+                  <span class="tone-emoji">🎩</span>
+                  <span class="tone-name">Formel &amp; Courtois</span>
+                  <span class="tone-desc">Professionnel, vouvoiement soigné — image premium</span>
+                </button>
+                <button class="tone-card" [class.selected]="agentForm.tone === 'concis'" (click)="setTone('concis')" id="tone-concis-btn">
+                  <span class="tone-emoji">⚡</span>
+                  <span class="tone-name">Concis &amp; Direct</span>
+                  <span class="tone-desc">Ultra-efficace, sans remplissage — pour les pressés</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Directives métier -->
+          <div class="agent-config-card agent-config-card-full">
+            <div class="agent-card-header">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+              <span>Directives commerciales spécifiques à votre boutique</span>
+              <span class="optional-badge">Optionnel</span>
+            </div>
+            <div class="form-group">
+              <label for="custom-rules-input">Règles et consignes métier</label>
+              <textarea id="custom-rules-input" [(ngModel)]="agentForm.custom_rules" rows="6" maxlength="2000" placeholder="Ex : Délai de confection 5 jours. Aucun remboursement sur mesure. Livraison Rive Gauche uniquement. Réductions accordées par le gérant seulement…"></textarea>
+              <div class="char-counter">
+                <span [class.char-limit-warn]="agentForm.custom_rules.length > 1800">{{ agentForm.custom_rules.length }} / 2000 caractères</span>
+              </div>
+              <span class="field-hint">Ces directives sont injectées dans les instructions de l'IA et appliquées à chaque conversation.</span>
+            </div>
+          </div>
+
+          <!-- Base de Connaissances & Documents RAG -->
+          <div class="agent-config-card agent-config-card-full knowledge-card">
+            <div class="agent-card-header">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+              </svg>
+              <span>Base de Connaissances &amp; RAG (Recherche Sémantique)</span>
+              <span class="knowledge-tech-tag">🧠 pgvector 768d</span>
+            </div>
+
+            <p class="knowledge-card-desc">
+              Déposez ici les documents de référence de votre boutique (FAQ, politique de retour/remboursement, garanties, horaires, conditions de livraison). L'agent IA découpe et vectorise automatiquement ces documents pour répondre avec précision à vos clients sur WhatsApp.
+            </p>
+
+            <!-- Zone de téléversement (Dropzone) -->
+            <div class="knowledge-upload-wrapper">
+              <label for="knowledge-file-upload" class="knowledge-dropzone" [class.uploading]="isUploadingKnowledge()">
+                @if (isUploadingKnowledge()) {
+                  <div class="knowledge-upload-loading">
+                    <span class="upload-spinner"></span>
+                    <span class="upload-loading-title">Ingestion &amp; Vectorisation en cours...</span>
+                    <span class="upload-loading-sub">Découpage en chunks, extraction et calcul des embeddings pgvector</span>
+                  </div>
+                } @else {
+                  <div class="knowledge-dropzone-content">
+                    <div class="knowledge-upload-icon">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                      </svg>
+                    </div>
+                    <div class="knowledge-dropzone-text">
+                      <span class="dropzone-title">Cliquez pour ajouter un document (PDF ou TXT)</span>
+                      <span class="dropzone-subtitle">FAQ, conditions de vente, horaires, garanties, politiques de retour (max 15 Mo)</span>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" (click)="$event.stopPropagation(); knowledgeFileInput.click()">
+                      Parcourir les fichiers
+                    </button>
+                  </div>
+                }
+              </label>
+              <input
+                #knowledgeFileInput
+                id="knowledge-file-upload"
+                type="file"
+                accept=".pdf,.txt,application/pdf,text/plain"
+                style="display: none;"
+                (change)="onKnowledgeFileSelected($event)"
+                [disabled]="isUploadingKnowledge()"
+              />
+            </div>
+
+            <!-- Liste des documents indexés -->
+            <div class="knowledge-docs-section">
+              <div class="knowledge-docs-header">
+                <span class="knowledge-docs-count">
+                  Documents indexés ({{ knowledgeDocuments().length }})
+                </span>
+                <button type="button" class="btn-refresh-knowledge" (click)="state.loadKnowledgeDocuments()" title="Actualiser la liste">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                  Actualiser
+                </button>
+              </div>
+
+              @if (knowledgeDocuments().length === 0) {
+                <div class="knowledge-empty-state">
+                  <div class="knowledge-empty-icon">📁</div>
+                  <div class="knowledge-empty-text">Aucun document indexé pour le moment</div>
+                  <div class="knowledge-empty-sub">Importez un PDF ou un fichier texte pour alimenter les connaissances de l'agent.</div>
+                </div>
+              } @else {
+                <div class="knowledge-docs-list">
+                  @for (doc of knowledgeDocuments(); track doc.id) {
+                    <div class="knowledge-doc-item" [class.doc-failed]="doc.status === 'failed'">
+                      <div class="doc-badge-pill" [class.pdf]="doc.document_type === 'pdf'" [class.txt]="doc.document_type === 'txt'">
+                        {{ doc.document_type === 'pdf' ? 'PDF' : 'TXT' }}
+                      </div>
+
+                      <div class="doc-info-block">
+                        <div class="doc-name" [title]="doc.filename">{{ doc.filename }}</div>
+                        <div class="doc-meta-row">
+                          @if (doc.created_at) {
+                            <span class="doc-date">Ajouté le {{ doc.created_at | date:'dd/MM/yyyy à HH:mm' }}</span>
+                          }
+                          @if (doc.status === 'ready') {
+                            <span class="badge-doc-status badge-ready">
+                              <span class="badge-dot dot-green"></span> Prêt &amp; Indexé
+                            </span>
+                          } @else if (doc.status === 'processing' || doc.status === 'pending') {
+                            <span class="badge-doc-status badge-processing">
+                              <span class="upload-spinner-xs"></span> Traitement en cours...
+                            </span>
+                          } @else if (doc.status === 'failed') {
+                            <span class="badge-doc-status badge-failed" [title]="doc.error_message || 'Erreur lors du traitement'">
+                              ⚠ Échec indexation
+                            </span>
+                          }
+                        </div>
+                        @if (doc.error_message) {
+                          <div class="doc-error-text">{{ doc.error_message }}</div>
+                        }
+                      </div>
+
+                      <div class="doc-action-block">
+                        <button
+                          type="button"
+                          class="btn-delete-doc"
+                          (click)="deleteKnowledgeDocument(doc)"
+                          [disabled]="isDeletingKnowledgeId() === doc.id"
+                          title="Supprimer ce document de la base">
+                          @if (isDeletingKnowledgeId() === doc.id) {
+                            <span class="upload-spinner-xs"></span>
+                          } @else {
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                          }
+                        </button>
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          </div>
+
+          <!-- Bouton Enregistrer -->
+          <div class="agent-save-row">
+            <button class="btn btn-primary btn-lg" (click)="saveAgentConfig()" [disabled]="isSavingAgentConfig()" id="save-agent-config-btn">
+              @if (isSavingAgentConfig()) {
+                <span class="upload-spinner"></span> Enregistrement en cours…
+              } @else {
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                Enregistrer les modifications
+              }
+            </button>
+            <span class="save-hint">Les modifications prennent effet immédiatement sur toutes les conversations WhatsApp.</span>
+          </div>
+
+        </div>
+      }
+
+    </main>
 
   <!-- ================= MODALE AJOUT PRODUIT ================= -->
   @if (showAddProductModal()) {
     <div class="modal-backdrop" (click)="showAddProductModal.set(false)">
-      <div class="modal-card" (click)="$event.stopPropagation()">
+      <div class="modal-card modal-lg" (click)="$event.stopPropagation()">
         <div class="modal-header">
           <h3>Ajouter un nouveau produit</h3>
           <button class="btn-close" (click)="showAddProductModal.set(false)">✕</button>
@@ -1064,36 +1436,315 @@
 
         <div class="modal-body">
           <div class="form-group">
-            <label>Nom du produit</label>
-            <input type="text" [(ngModel)]="newProduct.name" placeholder="ex. Redmi Note 13" />
+            <label>Nom du produit *</label>
+            <input type="text" [(ngModel)]="newProduct.name" placeholder="ex. iPhone 13, Robe Bogolan, Sac cuir..." />
           </div>
 
           <div class="form-group">
-            <label>Catégorie</label>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+              <label style="margin-bottom:0;">Catégorie *</label>
+              <button type="button" class="btn-text-action" (click)="openAddCategoryModal()">+ Nouvelle catégorie</button>
+            </div>
             <select [(ngModel)]="newProduct.category">
-              <option value="téléphone">Téléphone</option>
-              <option value="alimentation">Alimentation</option>
-              <option value="accessoire">Accessoire</option>
-              <option value="électronique">Électronique</option>
-              <option value="autre">Autre</option>
+              @for (c of categories(); track c.id) {
+                <option [value]="c.name">{{ c.name }}</option>
+              }
+              <option value="Général">Général</option>
             </select>
           </div>
 
           <div class="form-row">
             <div class="form-group">
-              <label>Prix unitaire (FCFA)</label>
+              <label>Prix de base (FCFA) *</label>
               <input type="number" [(ngModel)]="newProduct.price" placeholder="100000" />
             </div>
             <div class="form-group">
-              <label>Stock initial</label>
-              <input type="number" [(ngModel)]="newProduct.stock_quantity" placeholder="5" />
+              <label>Stock global initial</label>
+              <input 
+                type="number" 
+                [(ngModel)]="newProduct.stock_quantity" 
+                [disabled]="newProductHasVariants()"
+                placeholder="5" 
+              />
+              @if (newProductHasVariants()) {
+                <small style="color: #94A3B8; font-size: 0.75rem;">Calculé automatiquement depuis les déclinaisons.</small>
+              }
             </div>
+          </div>
+
+          <!-- Section Variantes / Déclinaisons -->
+          <div class="variants-form-section">
+            <div class="variants-toggle-row">
+              <label class="switch-container">
+                <input type="checkbox" [ngModel]="newProductHasVariants()" (ngModelChange)="newProductHasVariants.set($event)" />
+                <span class="switch-slider"></span>
+              </label>
+              <span class="switch-label">Ce produit a des déclinaisons (tailles, couleurs, capacités mémoire...)</span>
+            </div>
+
+            @if (newProductHasVariants()) {
+              <div class="variants-builder-box">
+                <div class="variants-builder-header">
+                  <span>Déclinaisons (Section 13.6 CDC)</span>
+                  <button type="button" class="btn btn-outline btn-xs" (click)="addVariant('new')">+ Ajouter une variante</button>
+                </div>
+
+                @if (newProduct.variants.length === 0) {
+                  <div class="empty-variants-hint">
+                    Aucune variante ajoutée. Cliquez sur <b>+ Ajouter une variante</b> pour renseigner les options disponibles (ex: 128Go, 256Go...).
+                  </div>
+                }
+
+                @for (v of newProduct.variants; track $index) {
+                  <div class="variant-builder-row">
+                    <div class="variant-field">
+                      <label>Attribut</label>
+                      <input type="text" [(ngModel)]="v.name" placeholder="ex. Capacité, Taille, Couleur" />
+                    </div>
+                    <div class="variant-field">
+                      <label>Valeur *</label>
+                      <input type="text" [(ngModel)]="v.value" placeholder="ex. 128Go, Noir, XL" />
+                    </div>
+                    <div class="variant-field">
+                      <label>Prix FCFA (optionnel)</label>
+                      <input type="number" [(ngModel)]="v.price" [placeholder]="newProduct.price ? newProduct.price.toString() : 'Prix base'" />
+                    </div>
+                    <div class="variant-field" style="max-width: 80px;">
+                      <label>Stock</label>
+                      <input type="number" [(ngModel)]="v.stock_quantity" placeholder="0" />
+                    </div>
+                    <button type="button" class="btn-remove-variant" (click)="removeVariant('new', $index)" title="Supprimer">✕</button>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Section Photo du produit -->
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>📷 Photo du produit <span style="font-weight:400;opacity:.65;font-size:.85em">(optionnel)</span></label>
+
+            @if (newProduct.image_url) {
+              <div class="product-image-preview">
+                <img [src]="getProductImageUrl(newProduct.image_url)" alt="Aperçu" class="preview-thumb" />
+                <div class="preview-info">
+                  <span class="preview-label">✓ Photo enregistrée</span>
+                  <button class="btn-remove-img" type="button" (click)="removeProductImage()" title="Supprimer la photo">✕ Supprimer</button>
+                </div>
+              </div>
+            } @else {
+              <div class="image-upload-zone">
+                <label for="product-img-upload" class="upload-area" [class.uploading]="isUploadingProductImage()">
+                  @if (isUploadingProductImage()) {
+                    <span class="upload-spinner"></span>
+                    <span>Upload en cours...</span>
+                  } @else {
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <span>Cliquer pour uploader une photo</span>
+                    <span style="font-size:.8em;opacity:.55">JPEG, PNG, WEBP — max 5 Mo</span>
+                  }
+                </label>
+                <input
+                  id="product-img-upload"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  style="display:none"
+                  (change)="onProductImageSelected($event)"
+                />
+                <div class="upload-divider"><span>ou lien direct vers l'image</span></div>
+                <input
+                  type="url"
+                  [(ngModel)]="newProduct.image_url"
+                  placeholder="https://exemple.com/photo.jpg (terminant par .jpg, .png...)"
+                  class="url-input"
+                />
+              </div>
+            }
           </div>
         </div>
 
         <div class="modal-footer">
           <button class="btn btn-outline" (click)="showAddProductModal.set(false)">Annuler</button>
           <button class="btn btn-primary" (click)="submitNewProduct()">Créer le produit</button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ================= MODALE MODIFIER PRODUIT ================= -->
+  @if (showEditProductModal()) {
+    <div class="modal-backdrop" (click)="showEditProductModal.set(false)">
+      <div class="modal-card modal-lg" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h3>✏️ Modifier le produit</h3>
+          <button class="btn-close" (click)="showEditProductModal.set(false)">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Nom du produit</label>
+            <input type="text" [(ngModel)]="editProduct.name" placeholder="ex. Redmi Note 13" />
+          </div>
+
+          <div class="form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+              <label style="margin-bottom:0;">Catégorie</label>
+              <button type="button" class="btn-text-action" (click)="openAddCategoryModal()">+ Nouvelle catégorie</button>
+            </div>
+            <select [(ngModel)]="editProduct.category">
+              @for (c of categories(); track c.id) {
+                <option [value]="c.name">{{ c.name }}</option>
+              }
+              <option value="Général">Général</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Prix unitaire / Prix de base (FCFA)</label>
+              <input type="number" [(ngModel)]="editProduct.price" placeholder="100000" />
+            </div>
+            <div class="form-group">
+              <label>Stock disponible</label>
+              <input type="number" [ngModel]="editProduct.stock_quantity" disabled />
+              <small style="color: #94A3B8; font-size: 0.75rem; margin-top: 0.25rem; display: block;">
+                Le stock ne se modifie plus ici : utilisez les boutons -1 / +1 / +5 dans le tableau (mouvements tracés).
+              </small>
+            </div>
+          </div>
+
+          <!-- Section Variantes / Déclinaisons dans Édition -->
+          <div class="variants-form-section">
+            <div class="variants-toggle-row">
+              <label class="switch-container">
+                <input type="checkbox" [ngModel]="editProductHasVariants()" (ngModelChange)="editProductHasVariants.set($event)" />
+                <span class="switch-slider"></span>
+              </label>
+              <span class="switch-label">Gérer les déclinaisons (tailles, couleurs, capacités...)</span>
+            </div>
+
+            @if (editProductHasVariants()) {
+              <div class="variants-builder-box">
+                <div class="variants-builder-header">
+                  <span>Déclinaisons du produit</span>
+                  <button type="button" class="btn btn-outline btn-xs" (click)="addVariant('edit')">+ Ajouter une variante</button>
+                </div>
+
+                @if (editProduct.variants.length === 0) {
+                  <div class="empty-variants-hint">
+                    Aucune variante pour ce produit. Cliquez sur <b>+ Ajouter une variante</b> pour en créer une.
+                  </div>
+                }
+
+                @for (v of editProduct.variants; track $index) {
+                  <div class="variant-builder-row">
+                    <div class="variant-field">
+                      <label>Attribut</label>
+                      <input type="text" [(ngModel)]="v.name" placeholder="ex. Capacité, Taille" />
+                    </div>
+                    <div class="variant-field">
+                      <label>Valeur *</label>
+                      <input type="text" [(ngModel)]="v.value" placeholder="ex. 128Go, Noir, XL" />
+                    </div>
+                    <div class="variant-field">
+                      <label>Prix FCFA (optionnel)</label>
+                      <input type="number" [(ngModel)]="v.price" [placeholder]="editProduct.price ? editProduct.price.toString() : 'Prix base'" />
+                    </div>
+                    <div class="variant-field" style="max-width: 80px;">
+                      <label>Stock</label>
+                      <input type="number" [(ngModel)]="v.stock_quantity" placeholder="0" />
+                    </div>
+                    <button type="button" class="btn-remove-variant" (click)="removeVariant('edit', $index)" title="Supprimer">✕</button>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Section Photo du produit -->
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>📷 Photo du produit <span style="font-weight:400;opacity:.65;font-size:.85em">(optionnel)</span></label>
+
+            @if (editProduct.image_url) {
+              <div class="product-image-preview">
+                <img [src]="getProductImageUrl(editProduct.image_url)" alt="Aperçu" class="preview-thumb" />
+                <div class="preview-info">
+                  <span class="preview-label">✓ Photo enregistrée</span>
+                  <button class="btn-remove-img" type="button" (click)="removeEditProductImage()" title="Supprimer la photo">✕ Supprimer</button>
+                </div>
+              </div>
+            } @else {
+              <div class="image-upload-zone">
+                <label for="edit-product-img-upload" class="upload-area" [class.uploading]="isUploadingEditProductImage()">
+                  @if (isUploadingEditProductImage()) {
+                    <span class="upload-spinner"></span>
+                    <span>Upload en cours...</span>
+                  } @else {
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <span>Cliquer pour remplacer la photo</span>
+                    <span style="font-size:.8em;opacity:.55">JPEG, PNG, WEBP — max 5 Mo</span>
+                  }
+                </label>
+                <input
+                  id="edit-product-img-upload"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  style="display:none"
+                  (change)="onEditProductImageSelected($event)"
+                />
+                <div class="upload-divider"><span>ou lien direct vers l'image</span></div>
+                <input
+                  type="url"
+                  [(ngModel)]="editProduct.image_url"
+                  placeholder="https://exemple.com/photo.jpg (terminant par .jpg, .png...)"
+                  class="url-input"
+                />
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-outline" (click)="showEditProductModal.set(false)">Annuler</button>
+          <button class="btn btn-primary" (click)="submitEditProduct()" [disabled]="isSavingEditProduct()">
+            @if (isSavingEditProduct()) {
+              <span class="upload-spinner"></span> Enregistrement…
+            } @else {
+              Enregistrer les modifications
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ================= MODALE CRÉATION CATÉGORIE ================= -->
+  @if (showAddCategoryModal()) {
+    <div class="modal-backdrop" (click)="showAddCategoryModal.set(false)">
+      <div class="modal-card modal-sm" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h3>🏷️ Nouvelle Catégorie Formelle</h3>
+          <button class="btn-close" (click)="showAddCategoryModal.set(false)">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Nom de la catégorie *</label>
+            <input type="text" [(ngModel)]="newCategory.name" placeholder="ex. Smartphones, Chaussures, Boissons..." />
+          </div>
+          <div class="form-group">
+            <label>Description (optionnel)</label>
+            <textarea rows="2" [(ngModel)]="newCategory.description" placeholder="Courte description de la catégorie..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" (click)="showAddCategoryModal.set(false)">Annuler</button>
+          <button class="btn btn-primary" (click)="submitCreateCategory()" [disabled]="isSavingCategory()">
+            @if (isSavingCategory()) {
+              <span class="upload-spinner"></span> Enregistrement...
+            } @else {
+              Créer la catégorie
+            }
+          </button>
         </div>
       </div>
     </div>

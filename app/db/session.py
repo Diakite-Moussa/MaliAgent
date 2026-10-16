@@ -11,5 +11,24 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 
-engine = create_async_engine(settings.database_url, echo=False)
+def _get_async_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+database_url = _get_async_database_url(settings.database_url)
+
+engine_kwargs = {"echo": False, "pool_pre_ping": True}
+if not database_url.startswith("sqlite"):
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+    })
+
+engine = create_async_engine(database_url, **engine_kwargs)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
+
+

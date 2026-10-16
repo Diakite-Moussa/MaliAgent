@@ -18,6 +18,9 @@ import {
   MerchantMission,
   MerchantDriver,
   MerchantPartner,
+  AgentConfiguration,
+  KnowledgeDocument,
+  ProductCategory,
 } from '../models/dashboard.models';
 
 @Injectable({
@@ -58,12 +61,16 @@ export class DashboardStateService implements OnDestroy {
 
   readonly orders = signal<Order[]>([]);
   readonly products = signal<Product[]>([]);
+  readonly categories = signal<ProductCategory[]>([]);
   readonly lowStockProducts = signal<any[]>([]);
   readonly handoffs = signal<any[]>([]);
   readonly payments = signal<PaymentItem[]>([]);
   readonly merchantMissions = signal<MerchantMission[]>([]);
   readonly merchantDrivers = signal<MerchantDriver[]>([]);
   readonly merchantPartners = signal<MerchantPartner[]>([]);
+  readonly agentConfig = signal<AgentConfiguration | null>(null);
+  readonly isSavingAgentConfig = signal<boolean>(false);
+  readonly knowledgeDocuments = signal<KnowledgeDocument[]>([]);
 
   // ================= DONNÉES SUPER ADMIN =================
   readonly platformStats = signal<PlatformStats>({
@@ -133,9 +140,12 @@ export class DashboardStateService implements OnDestroy {
     this.loadStats();
     this.loadOrders();
     this.loadProducts();
+    this.loadCategories();
     this.loadHandoffs();
     this.loadMerchantDeliveries();
     this.loadPayments();
+    this.loadAgentConfig();
+    this.loadKnowledgeDocuments();
   }
 
   loadStats() {
@@ -169,6 +179,15 @@ export class DashboardStateService implements OnDestroy {
       next: (data) => {
         this.products.set(data || []);
       },
+    });
+  }
+
+  loadCategories() {
+    this.http.get<ProductCategory[]>(`${this.apiUrl}/api/categories`).subscribe({
+      next: (data) => {
+        this.categories.set(data || []);
+      },
+      error: (err) => console.error('Erreur chargement catégories:', err),
     });
   }
 
@@ -209,6 +228,54 @@ export class DashboardStateService implements OnDestroy {
       },
       error: (err) => {
         console.error('Erreur chargement paiements:', err);
+      },
+    });
+  }
+
+  loadAgentConfig() {
+    this.http.get<AgentConfiguration>(`${this.apiUrl}/api/dashboard/agent/config`).subscribe({
+      next: (cfg) => {
+        this.agentConfig.set(cfg);
+      },
+      error: (err) => {
+        console.error('Erreur chargement configuration agent IA:', err);
+      },
+    });
+  }
+
+  loadKnowledgeDocuments() {
+    this.http.get<KnowledgeDocument[]>(`${this.apiUrl}/api/knowledge`).subscribe({
+      next: (docs) => {
+        this.knowledgeDocuments.set(Array.isArray(docs) ? docs : []);
+      },
+      error: (err) => {
+        console.error('Erreur chargement base de connaissances:', err);
+      },
+    });
+  }
+
+  uploadKnowledgeDocument(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.http.post<KnowledgeDocument>(`${this.apiUrl}/api/knowledge/upload`, formData);
+  }
+
+  deleteKnowledgeDocument(documentId: string) {
+    return this.http.delete<{ status: string; document_id: string }>(`${this.apiUrl}/api/knowledge/${documentId}`);
+  }
+
+  updateAgentConfig(payload: Partial<AgentConfiguration>, onSuccess?: () => void) {
+    this.isSavingAgentConfig.set(true);
+    this.http.put<AgentConfiguration>(`${this.apiUrl}/api/dashboard/agent/config`, payload).subscribe({
+      next: (updated) => {
+        this.agentConfig.set(updated);
+        this.isSavingAgentConfig.set(false);
+        this.showToast("✓ Configuration de l'agent IA enregistrée avec succès !");
+        if (onSuccess) onSuccess();
+      },
+      error: (err) => {
+        this.isSavingAgentConfig.set(false);
+        this.showToast(err.error?.detail || "Erreur lors de l'enregistrement de l'agent IA");
       },
     });
   }

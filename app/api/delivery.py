@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from pathlib import Path
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
@@ -31,6 +32,7 @@ from app.models import (
     DeliveryPartner,
     DeliveryZone,
     DriverType,
+    Invoice,
     MissionStatus,
     Order,
     OrderStatus,
@@ -200,6 +202,12 @@ async def create_mission(
         order = (await session.execute(stmt_order)).scalar_one_or_none()
         if not order:
             raise HTTPException(status_code=404, detail="Commande introuvable dans cette boutique")
+
+        # 2. Vérifier qu'aucune mission n'existe déjà pour cette commande
+        stmt_mission = select(DeliveryMission).where(DeliveryMission.order_id == payload.order_id, DeliveryMission.business_id == business_id)
+        existing_mission = (await session.execute(stmt_mission)).scalar_one_or_none()
+        if existing_mission:
+            raise HTTPException(status_code=400, detail="Une mission existe déjà pour cette commande")
 
         # Récupérer les infos client
         stmt_c = select(Customer).where(Customer.id == order.customer_id)
@@ -844,11 +852,24 @@ async def driver_verify_otp(
         mission.otp_verified = True
         mission.delivered_at = datetime.now(timezone.utc)
 
-        # Mettre à jour également le statut de la commande associée
+        # Mettre à jour également le statut de la commande associée et marquer le paiement effectué
         stmt_order = select(Order).where(Order.id == mission.order_id)
         order = (await session.execute(stmt_order)).scalar_one_or_none()
         if order:
             order.status = OrderStatus.DELIVERED
+            order.payment_status = "paid"
+
+            # Mise à jour automatique de la facture en statut 'paid'
+            stmt_inv = select(Invoice).where(Invoice.order_id == order.id)
+            inv = (await session.execute(stmt_inv)).scalar_one_or_none()
+            if inv:
+                inv.status = "paid"
+                try:
+                    old_pdf = Path("storage") / "invoices" / f"{inv.invoice_number}.pdf"
+                    if old_pdf.exists():
+                        old_pdf.unlink()
+                except Exception:
+                    pass
 
         await session.commit()
         return {

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     container_name: maliagent-postgres
     restart: unless-stopped
     environment:
@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U maliagent -d maliagent"]
+      test: [ "CMD-SHELL", "pg_isready -U maliagent -d maliagent" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -34,7 +34,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./storage/invoices:/app/storage/invoices
+      - ./storage:/app/storage
 
 volumes:
   postgres-data:

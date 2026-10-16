@@ -23,10 +23,12 @@ from sqlalchemy.orm import selectinload
 
 from app.agent.orchestrator import run_agent_turn
 from app.core.asyncio_compat import use_selector_event_loop_on_windows
+from app.core.logging import setup_logging
 from app.db.session import async_session
 from app.models import Business, Conversation, Customer, Invoice, Order, OrderStatus, Product
 
 use_selector_event_loop_on_windows()
+setup_logging()  # DIAG : active l'affichage des logger.info() de diagnostic dans ce script autonome
 
 
 async def run_e2e_suite():

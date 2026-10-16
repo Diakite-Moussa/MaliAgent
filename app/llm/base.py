@@ -68,3 +68,11 @@ class LLMProvider(ABC):
     ) -> LLMResponse:
         """Envoie une conversation au LLM et retourne sa réponse normalisée."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Retourne un vecteur d'embedding par texte fourni, dans le même ordre.
+        Utilisé pour indexer et interroger la base de connaissances (RAG).
+        """
+        raise NotImplementedError

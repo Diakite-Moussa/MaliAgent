@@ -32,3 +32,5 @@ storage/audio/*
 storage/products/*
 !storage/products/.gitkeep
 
+
+.env.production

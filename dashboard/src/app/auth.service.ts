@@ -1,5 +1,6 @@
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
 import { Observable, tap } from 'rxjs';
 import { environment } from '../environments/environment';
 
@@ -18,6 +19,7 @@ const STORAGE_KEY = 'maliagent_auth_session';
 })
 export class AuthService {
   private http = inject(HttpClient);
+  private router = inject(Router);
   readonly apiUrl = environment.apiUrl;
 
   // État réactif de l'utilisateur connecté
@@ -91,7 +93,7 @@ export class AuthService {
       );
   }
 
-  logout(): void {
+  logout(redirect: boolean = true): void {
     // Révocation du cookie HttpOnly sur le serveur
     this.http.post(`${this.apiUrl}/api/auth/logout`, {}).subscribe({
       error: () => {},
@@ -99,6 +101,9 @@ export class AuthService {
     localStorage.removeItem(STORAGE_KEY);
     this.impersonationSession.set(null);
     this.currentUser.set(null);
+    if (redirect) {
+      this.router.navigate(['/login']);
+    }
   }
 
   getToken(): string | null {

@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from app.whatsapp.client import _is_retryable_whatsapp_error, send_text_message
+from app.agent.orchestrator import _extract_photo_payload
+from app.whatsapp.client import _is_retryable_whatsapp_error, send_image_message, send_text_message
 from app.whatsapp.token_manager import get_token_quick_status, inspect_token
 
 
@@ -77,6 +78,46 @@ async def test_whatsapp_no_retry_on_client_error():
 
         assert exc_info.value.response.status_code == 401
         assert call_count == 1, "Une erreur 401 ne doit JAMAIS être retentée"
+
+
+@pytest.mark.asyncio
+async def test_send_image_message_builds_meta_payload():
+    """Vérifie le payload image envoyé à l'API Cloud Meta."""
+    captured = {}
+
+    async def mock_post(*args, **kwargs):
+        captured.update(kwargs)
+        request = httpx.Request("POST", "https://graph.facebook.com")
+        return httpx.Response(status_code=200, request=request, json={"messages": [{"id": "wamid.image"}]})
+
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        result = await send_image_message(
+            "22370001122",
+            "https://cdn.example.test/product.jpg",
+            "Produit - 95000 FCFA",
+        )
+
+    assert result["messages"][0]["id"] == "wamid.image"
+    assert captured["json"] == {
+        "messaging_product": "whatsapp",
+        "to": "22370001122",
+        "type": "image",
+        "image": {
+            "link": "https://cdn.example.test/product.jpg",
+            "caption": "Produit - 95000 FCFA",
+        },
+    }
+
+
+def test_extract_photo_payload_removes_machine_marker():
+    """Le marqueur photo ne doit jamais parvenir au texte final du LLM."""
+    cleaned, payload = _extract_photo_payload(
+        '__PHOTO_PAYLOAD__{"url":"https://cdn.example.test/photo.jpg","caption":"Produit"}__END__\n'
+        "Photo envoyée."
+    )
+
+    assert cleaned == "Photo envoyée."
+    assert payload == {"url": "https://cdn.example.test/photo.jpg", "caption": "Produit"}
 
 
 def test_token_quick_status():

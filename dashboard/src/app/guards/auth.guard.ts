@@ -38,6 +38,10 @@ export const superAdminGuard: CanActivateFn = () => {
     return true;
   }
 
+  if (!authService.isAuthenticated()) {
+    return router.createUrlTree(['/login']);
+  }
+
   return router.createUrlTree(['/merchant']);
 };
 
@@ -47,6 +51,10 @@ export const driverGuard: CanActivateFn = () => {
 
   if (authService.isAuthenticated() && authService.isDriver()) {
     return true;
+  }
+
+  if (!authService.isAuthenticated()) {
+    return router.createUrlTree(['/login']);
   }
 
   return router.createUrlTree(['/merchant']);

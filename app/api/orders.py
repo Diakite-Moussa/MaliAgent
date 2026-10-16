@@ -3,6 +3,7 @@ Endpoints de gestion des commandes pour le Dashboard commerçant.
 """
 
 import uuid
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -130,12 +131,20 @@ async def update_order_status(
             raise HTTPException(status_code=404, detail="Commande introuvable")
 
         order.status = OrderStatus(update.status)
+        if update.status == "delivered":
+            order.payment_status = "paid"
 
         # Mise à jour éventuelle de la facture
         stmt_inv = select(Invoice).where(Invoice.order_id == order.id)
         inv = (await session.execute(stmt_inv)).scalar_one_or_none()
         if inv and update.status == "delivered":
             inv.status = "paid"
+            try:
+                old_pdf = Path("storage") / "invoices" / f"{inv.invoice_number}.pdf"
+                if old_pdf.exists():
+                    old_pdf.unlink()
+            except Exception:
+                pass
         elif inv and update.status == "cancelled":
             inv.status = "cancelled"
 

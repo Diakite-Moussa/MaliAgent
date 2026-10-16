@@ -16,7 +16,7 @@ from app.api.audio import store_outgoing_audio
 from app.core.logging import get_logger
 from app.llm.base import Message
 from app.llm.factory import get_llm_provider
-from app.models import Business, Conversation, ConversationMessage, Customer
+from app.models import AgentConfiguration, Business, Conversation, ConversationMessage, Customer
 from app.tools.definitions import TOOLS
 from app.tools.executor import execute_tool
 from app.voice.formatter import clean_text_for_speech, extract_spoken_and_display_text
@@ -80,10 +80,24 @@ async def _traced_execute_tool(
 
 
 
-def build_system_prompt(business_name: str = "notre boutique", target_lang: str = "fr") -> str:
+def build_system_prompt(
+    business_name: str = "notre boutique",
+    target_lang: str = "fr",
+    agent_name: str = "Assistant",
+    tone: str = "chaleureux",
+    custom_rules: str | None = None,
+) -> str:
+    tone_instructions = {
+        "chaleureux": "Adopte un ton très chaleureux, accueillant, empathique et enthousiaste. Sois vendeur et bienveillant.",
+        "formel": "Adopte un ton très professionnel, poli, cérémonieux et courtois. Utilise un vouvoiement irréprochable et des formules de politesse soignées.",
+        "concis": "Adopte un ton ultra-concis, direct et efficace. Va droit au but sans formules de remplissage ni verbiage superflu.",
+    }
+    tone_desc = tone_instructions.get(tone.lower() if tone else "chaleureux", tone_instructions["chaleureux"])
+
     if target_lang == "bm":
         intro = (
-            f"Tu es l'assistant commercial WhatsApp officiel de la boutique '{business_name}' au Mali.\n"
+            f"Tu es {agent_name}, l'assistant commercial WhatsApp officiel de la boutique '{business_name}' au Mali.\n"
+            f"Ton et style : {tone_desc}\n"
             "🚨 ATTENTION DIRECTIVE LINGUISTIQUE STRICTE (BAMBARA / BAMANANKAN OBLIGATOIRE) :\n"
             "- Le client s'exprime actuellement en BAMBARA. Tu DOIS IMPÉRATIVEMENT lui répondre EN BAMBARA poli, naturel et chaleureux de Bamako !\n"
             "- INTERDICTION ABSOLUE de formuler ta réponse en Français (seuls les noms de marques et modèles comme 'Samsung Galaxy A15' ou 'iPhone' restent tels quels).\n"
@@ -92,15 +106,21 @@ def build_system_prompt(business_name: str = "notre boutique", target_lang: str 
         )
     else:
         intro = (
-            f"Tu es l'assistant commercial WhatsApp officiel de la boutique '{business_name}' au Mali. "
-            "Tu t'exprimes en français poli, naturel et chaleureux. Les prix sont toujours en FCFA.\n\n"
+            f"Tu es {agent_name}, l'assistant commercial WhatsApp officiel de la boutique '{business_name}' au Mali. "
+            f"Ton et style : {tone_desc} "
+            "Tu t'exprimes en français poli, naturel et adapté aux échanges commerciaux maliens. Les prix sont toujours en FCFA.\n\n"
         )
 
-    return (
-        intro +
+    base_rules = (
         "Règles strictes sur l'utilisation des tools :\n"
-        "1. PRODUITS & PRIX : Utilise toujours 'search_products' ou 'check_stock' pour renseigner "
-        "le client. N'invente jamais de prix ni de disponibilité.\n"
+        "1. PRODUITS, CATÉGORIES & VARIANTES : Utilise toujours 'search_products' ou 'check_stock' pour renseigner "
+        "le client. N'invente jamais de prix ni de disponibilité. Si un produit dispose de déclinaisons "
+        "(variantes : couleur, taille, capacité mémoire comme 128Go vs 256Go), présente clairement les options "
+        "avec leurs tarifs respectifs et invite le client à préciser son choix. Renseigne toujours le paramètre 'variant' "
+        "dans 'create_order' pour tout article qui dispose de déclinaisons.\n"
+        "1bis. BASE DE CONNAISSANCES : Si le client demande une information interne à la boutique "
+        "(politique/retours, garantie, horaires, procédures, FAQ, conditions internes, règles commerciales, "
+        "etc.), appelle d'abord 'search_knowledge_base(query=...)' avant de répondre.\n"
         "2. LIVRAISON & GÉOLOCALISATION GPS (BAMAKO) :\n"
         "   - Lorsque le client souhaite se faire livrer, propose-lui les 2 options : soit indiquer son quartier par écrit (ex: Lafiabougou, ACI 2000, Faladié...), soit partager sa position GPS exacte directement sur WhatsApp via l'option de localisation.\n"
         "   - Si le message contient '[LOCALISATION_GPS: latitude=..., longitude=...]' ou si des coordonnées GPS sont fournies, "
@@ -184,7 +204,21 @@ def build_system_prompt(business_name: str = "notre boutique", target_lang: str 
         "    - Si le message du client est en Bambara, le contenu de la balise <voice> DOIT ÊTRE EN BAMBARA (ex: '<voice>Samsung Galaxy A15 sɔngɔ ye 95 000 FCFA ye. A bɛ yen. I b'a fɛ joli ?</voice>').\n"
         "    - Cette version <voice> doit être formulée comme un commerçant humain qui parle au micro : ultra-courte (1 à 2 phrases directes), fluide, sans émoji, sans tiret, sans astérisque et sans parenthèse de stock.\n"
         "    - Après la balise </voice>, écris ensuite ton message textuel complet et soigné pour WhatsApp (avec émojis, listes et détails).\n"
+        "13. PHOTOS DE PRODUITS :\n"
+        "    - Dès que le client demande à voir un produit ou demande une photo/image "
+        "('montre-moi la photo', 'je veux voir le sac', 'envoie l'image', 'a ja lajɛ'), "
+        "appelle le tool 'send_product_photo(product_name=...)' pour lui transmettre la photo officielle du produit.\n"
     )
+
+    if custom_rules and custom_rules.strip():
+        rules_text = (
+            "\n14. DIRECTIVES ET RÈGLES COMMERCIALES SPÉCIFIQUES À CETTE BOUTIQUE :\n"
+            f"{custom_rules.strip()}\n"
+            "Applique impérativement ces directives spécifiques définies par le gérant de la boutique.\n"
+        )
+        base_rules += rules_text
+
+    return intro + base_rules
 
 
 SYSTEM_PROMPT = build_system_prompt()
@@ -341,12 +375,94 @@ async def run_agent_turn(
     customer = None
     recent_history: list[ConversationMessage] = []
 
-    # Détection linguistique (Français vs Bambara)
-    detected_lang = forced_language or detect_language(user_message)
+    # 0. Chargement de la personnalisation et configuration de l'agent
+    stmt_cfg = select(AgentConfiguration).where(AgentConfiguration.business_id == business_id)
+    agent_cfg = (await session.execute(stmt_cfg)).scalar_one_or_none()
+
+    agent_name = agent_cfg.agent_name if agent_cfg else "Assistant"
+    agent_tone = agent_cfg.tone if agent_cfg else "chaleureux"
+    agent_custom_rules = agent_cfg.custom_rules if agent_cfg else None
+    agent_default_lang = agent_cfg.default_language if agent_cfg else "fr"
+    agent_enabled = agent_cfg.enabled if agent_cfg is not None else True
+
+    # Détection linguistique (Français vs Bambara), avec repli sur la langue par défaut de la boutique
+    detected_lang = forced_language or detect_language(user_message, default_lang=agent_default_lang)
     fallback_message = FALLBACK_MESSAGE_BM if detected_lang == "bm" else FALLBACK_MESSAGE_FR
     handoff_message = HUMAN_HANDOFF_MESSAGE_BM if detected_lang == "bm" else HUMAN_HANDOFF_MESSAGE_FR
 
-    # 1. Résolution du Customer et de la Conversation active
+    # 1. Vérification de l'interrupteur général de l'agent IA (si désactivé par le commerçant)
+    if not agent_enabled:
+        disabled_message = (
+            "I ni ce ! An ka dɛmɛbaga sisan bɛ lafiya la. Boutique kuntigi bɛna kuma i fɛ sisan sisan. Sabali dɔɔnin !"
+            if detected_lang == "bm"
+            else "Bonjour ! Notre assistant virtuel est actuellement en pause. Un responsable de la boutique a été notifié et va vous répondre directement d'ici peu. Merci de votre patience !"
+        )
+        if customer_phone_number:
+            stmt_cust = select(Customer).where(
+                Customer.business_id == business_id,
+                Customer.whatsapp_phone_number == customer_phone_number,
+            )
+            cust = (await session.execute(stmt_cust)).scalar_one_or_none()
+            if not cust:
+                cust = Customer(
+                    business_id=business_id,
+                    whatsapp_phone_number=customer_phone_number,
+                    preferred_language=detected_lang,
+                    preferred_channel_type="voice" if is_voice else "text",
+                )
+                session.add(cust)
+                await session.flush()
+
+            stmt_conv = (
+                select(Conversation)
+                .where(
+                    Conversation.business_id == business_id,
+                    Conversation.customer_id == cust.id,
+                )
+                .order_by(Conversation.updated_at.desc())
+                .limit(1)
+            )
+            conv = (await session.execute(stmt_conv)).scalar_one_or_none()
+            if not conv:
+                conv = Conversation(
+                    business_id=business_id,
+                    customer_id=cust.id,
+                    channel="whatsapp",
+                    status="needs_human",
+                )
+                session.add(conv)
+                await session.flush()
+            else:
+                conv.status = "needs_human"
+
+            session.add(
+                ConversationMessage(
+                    conversation_id=conv.id,
+                    role="user",
+                    content=user_message,
+                )
+            )
+            session.add(
+                ConversationMessage(
+                    conversation_id=conv.id,
+                    role="assistant",
+                    content=disabled_message,
+                )
+            )
+            await session.commit()
+
+        audio_url = None
+        if is_voice:
+            try:
+                tts = get_tts_provider()
+                tts_res = await tts.synthesize(disabled_message, language=detected_lang)
+                _, audio_url = store_outgoing_audio(tts_res.audio_bytes, tts_res.mime_type)
+            except Exception as err:
+                logger.warning("Erreur synthèse vocale désactivation agent : %s", err)
+
+        return _build_return(disabled_message, audio_url, None)
+
+    # 2. Résolution du Customer et de la Conversation active
     if customer_phone_number:
         stmt = select(Customer).where(
             Customer.business_id == business_id,
@@ -431,7 +547,13 @@ async def run_agent_turn(
     messages = [
         Message(
             role="system",
-            content=build_system_prompt(business_name=biz_name, target_lang=detected_lang),
+            content=build_system_prompt(
+                business_name=biz_name,
+                target_lang=detected_lang,
+                agent_name=agent_name,
+                tone=agent_tone,
+                custom_rules=agent_custom_rules,
+            ),
         )
     ]
     for m in recent_history:

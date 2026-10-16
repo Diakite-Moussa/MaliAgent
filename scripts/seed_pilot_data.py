@@ -134,7 +134,7 @@ async def seed_pilot_data():
                             business_id=biz.id,
                             name=z_data["name"],
                             fee=z_data["fee"],
-                            keywords=z_data["keywords"],
+                            keywords=", ".join(z_data["keywords"]),
                         )
                         session.add(zone)
                 print(f"   -> {len(BAMAKO_ZONES)} zones de livraison configurées pour {biz.name}")

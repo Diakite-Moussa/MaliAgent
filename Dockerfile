@@ -30,8 +30,13 @@ COPY storage/ ./storage
 # Création des dossiers storage s'ils n'existent pas
 RUN mkdir -p /app/storage/invoices /app/storage/audio/outgoing /app/storage/products
 
-# Port exposé par FastAPI
+# Rendre le script de démarrage exécutable
+RUN chmod +x /app/scripts/start.sh
+
+# Port par défaut (Render injecte sa propre variable PORT)
+ENV PORT=8000
 EXPOSE 8000
 
 # Commande de démarrage par défaut
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["/app/scripts/start.sh"]
+

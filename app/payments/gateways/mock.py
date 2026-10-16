@@ -54,6 +54,15 @@ class MockPaymentGateway(BasePaymentGateway):
                 f"Une demande Orange Money de {request.amount} {request.currency} a été envoyée sur {phone_str}. "
                 f"Tapez votre code secret Orange Money pour valider la transaction."
             )
+        elif "moov" in sub_provider or "malitel" in sub_provider:
+            tx_ref = f"PAY-MOV-{short_id}"
+            provider_tag = "mock_moov_money"
+            checkout_url = f"{settings.public_base_url}/api/payments/mock-checkout/{tx_ref}"
+            phone_str = request.customer_phone or "votre mobile"
+            instructions = (
+                f"Une demande Moov Money de {request.amount} {request.currency} a été envoyée sur {phone_str}. "
+                f"Composez le *166# ou validez la notification sur votre mobile pour confirmer."
+            )
         else:
             tx_ref = f"PAY-SIM-{short_id}"
             provider_tag = "mock"

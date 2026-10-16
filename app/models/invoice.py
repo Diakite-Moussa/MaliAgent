@@ -40,7 +40,7 @@ class Invoice(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     # Chemin local vers le fichier PDF généré
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    order: Mapped[Order] = relationship("Order", lazy="selectin")
+    order: Mapped[Order] = relationship("Order", back_populates="invoice", lazy="selectin")
 
 
     def __repr__(self) -> str:

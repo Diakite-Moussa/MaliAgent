@@ -6,7 +6,7 @@ est rattaché à un Business via business_id.
 """
 
 from sqlalchemy import String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
 
@@ -28,6 +28,15 @@ class Business(Base, UUIDPKMixin, TimestampMixin):
 
     # Statut d'activation de la boutique par le Super Admin (section 6.3)
     is_active: Mapped[bool] = mapped_column(default=True)
+
+    # Configuration personnalisée de l'agent IA (Sprint A3)
+    agent_config = relationship(
+        "AgentConfiguration",
+        backref="business",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return f"<Business {self.name!r} (active={self.is_active})>"

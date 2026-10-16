@@ -1,4 +1,4 @@
-import { Component, inject, signal, OnInit } from '@angular/core';
+import { Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -13,7 +13,7 @@ import { DriverMission } from '../../models/dashboard.models';
   imports: [CommonModule, FormsModule],
   templateUrl: './driver-view.component.html',
 })
-export class DriverViewComponent implements OnInit {
+export class DriverViewComponent implements OnInit, OnDestroy {
   readonly state = inject(DashboardStateService);
   readonly authService = inject(AuthService);
   private http = inject(HttpClient);
@@ -172,9 +172,12 @@ export class DriverViewComponent implements OnInit {
       });
   }
 
+  ngOnDestroy() {
+    this.state.stopAutoRefresh();
+  }
+
   logout() {
     this.state.stopAutoRefresh();
-    this.authService.logout();
-    this.router.navigate(['/login']);
+    this.authService.logout(true);
   }
 }

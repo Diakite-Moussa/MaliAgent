@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     ollama_api_key: str = ""
     ollama_base_url: str = "https://ollama.com"
     ollama_model: str = "gpt-oss:120b-cloud"
+    ollama_embedding_model: str = "nomic-embed-text"
 
     #meta
     whatsapp_access_token: str = ""
@@ -52,9 +53,44 @@ class Settings(BaseSettings):
     orange_api_url: str = "https://api.orange.com/orange-money-webpay/dev/v1"
     orange_webhook_secret: str = ""
 
+    # Moov Money Mali (Réservé Phase 2 - Production)
+    moov_client_id: str = ""
+    moov_client_secret: str = ""
+    moov_api_url: str = "https://api.moov-africa.ml/flooz/v1"
+    moov_webhook_secret: str = ""
+
+    # Voice & Multilingual (V0.5)
+    stt_provider: str = "mock"  # "mock", "whisper_cloud"
+    stt_api_key: str = ""
+    stt_base_url: str = "https://api.groq.com/openai/v1"
+    stt_model: str = "whisper-large-v3"
+
+    tts_provider: str = "mock"  # "mock", "edge", "mms"
+    audio_storage_dir: str = "storage/audio"
+
+    # Sécurité Session & Cookies
+    cookie_secure: bool | None = None
+
+    # Rate Limiting Auth
+    auth_rate_limit_max_attempts: int = 5
+    auth_rate_limit_window_seconds: int = 60
+
+    # Délai de grâce / validité d'une session de paiement en attente (minutes)
+    payment_session_expiry_minutes: int = 15
+
     @property
     def allowed_cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        return self.env.lower() in ("prod", "production")
+
+    @property
+    def is_cookie_secure(self) -> bool:
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return self.is_production
 
     @property
     def is_payment_simulation(self) -> bool:
@@ -62,4 +98,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
 

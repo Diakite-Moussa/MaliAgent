@@ -39,10 +39,13 @@ def _is_retryable_error(exc: BaseException) -> bool:
 
 
 class OllamaCloudProvider(LLMProvider):
-    def __init__(self, api_key: str, base_url: str, model: str):
+    """Provider de chat et d'embeddings compatible Ollama Cloud / OpenAI-like."""
+
+    def __init__(self, api_key: str, base_url: str, model: str, embedding_model: str = "nomic-embed-text"):
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._embedding_model = embedding_model
 
     def _to_openai_messages(self, messages: list[Message]) -> list[dict]:
         result = []
@@ -77,11 +80,6 @@ class OllamaCloudProvider(LLMProvider):
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
     async def _call_completions(self, payload: dict) -> dict:
-        """
-        Appel HTTP brut à Ollama Cloud, isolé pour bénéficier du retry
-        automatique avec backoff exponentiel (jusqu'à 3 tentatives) sur les
-        erreurs transitoires uniquement (timeout, réseau, 5xx).
-        """
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{self._base_url}/v1/chat/completions",
@@ -104,31 +102,14 @@ class OllamaCloudProvider(LLMProvider):
         if openai_tools:
             payload["tools"] = openai_tools
 
-        try:
-            data = await self._call_completions(payload)
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Erreur Ollama Cloud (HTTP %s) après tentatives de retry : %s",
-                e.response.status_code,
-                e,
-            )
-            raise
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
-            logger.error("Ollama Cloud injoignable après tentatives de retry : %s", e)
-            raise
-
+        data = await self._call_completions(payload)
         choice = data["choices"][0]["message"]
-        content = choice.get("content")
-
         tool_calls: list[ToolCall] = []
         for raw_call in choice.get("tool_calls") or []:
             fn = raw_call["function"]
             try:
                 arguments = json.loads(fn["arguments"])
             except (json.JSONDecodeError, TypeError):
-                # Le modèle a mal formaté les arguments — à surveiller
-                # de près pendant le test de tool calling (script
-                # scripts/test_tool_calling.py).
                 arguments = {}
             tool_calls.append(
                 ToolCall(
@@ -137,5 +118,40 @@ class OllamaCloudProvider(LLMProvider):
                     arguments=arguments,
                 )
             )
+        return LLMResponse(content=choice.get("content"), tool_calls=tool_calls, raw=data)
 
-        return LLMResponse(content=content, tool_calls=tool_calls, raw=data)
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        # URLs candidates : local Ollama en priorité s'il est disponible (instantané ~20ms), sinon URL distante
+        candidate_urls = []
+        if "localhost" not in self._base_url and "127.0.0.1" not in self._base_url:
+            candidate_urls.append("http://localhost:11434/api/embed")
+        candidate_urls.append(f"{self._base_url}/api/embed")
+
+        last_error = None
+        for embed_url in candidate_urls:
+            headers = {}
+            if self._api_key and "localhost" not in embed_url and "127.0.0.1" not in embed_url:
+                headers["Authorization"] = f"Bearer {self._api_key}"
+
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(
+                        embed_url,
+                        headers=headers,
+                        json={"model": self._embedding_model, "input": texts},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if "embeddings" in data:
+                        return data["embeddings"]
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Échec embed sur %s: %s. Tentative sur le prochain endpoint...", embed_url, exc)
+                continue
+
+        if last_error:
+            raise last_error
+        return []

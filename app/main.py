@@ -1,7 +1,9 @@
 import time
 
+
 from app.core.asyncio_compat import use_selector_event_loop_on_windows
 
+# MaliAgent Core Server - STT Whisper & TTS Formatter Active
 use_selector_event_loop_on_windows()
 
 from fastapi import FastAPI
@@ -9,10 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.api.audio import router as audio_router
 from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.delivery import router as delivery_router
 from app.api.invoices import router as invoices_router
+from app.api.knowledge import router as knowledge_router
 from app.api.orders import router as orders_router
 from app.api.payments import router as payments_router
 from app.api.platform import router as platform_router
@@ -22,6 +26,8 @@ from app.core.logging import setup_logging
 from app.db.session import async_session
 from app.whatsapp.token_manager import get_token_quick_status
 from app.whatsapp.webhook import router as whatsapp_router
+from app.api.agent_config import router as agent_config_router
+from app.api.categories import router as categories_router
 
 setup_logging()
 
@@ -92,9 +98,13 @@ async def health():
 app.include_router(auth_router)
 app.include_router(platform_router)
 app.include_router(whatsapp_router)
+app.include_router(audio_router)
 app.include_router(invoices_router)
 app.include_router(dashboard_router)
 app.include_router(orders_router)
+app.include_router(knowledge_router)
 app.include_router(products_router)
 app.include_router(delivery_router)
 app.include_router(payments_router)
+app.include_router(agent_config_router)
+app.include_router(categories_router)

@@ -1,0 +1,94 @@
+# =========================================================
+# Render Blueprint — Déploiement complet MaliAgent
+# =========================================================
+# Documentation : https://render.com/docs/blueprint-spec
+
+services:
+  # ---------------------------------------------------------
+  # 1. Backend API (FastAPI + Docker)
+  # ---------------------------------------------------------
+  - type: web
+    name: maliagent-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: prod
+      # Lien automatique avec la base PostgreSQL gérée par Render
+      - key: DATABASE_URL
+        fromDatabase:
+          name: maliagent-db
+          property: connectionString
+      # Clé secrète JWT générée automatiquement si non fournie
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "1440"
+      # URL publique de l'API (à mettre à jour avec votre sous-domaine Render)
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # Origines autorisées pour le dashboard (inclure l'URL du dashboard Render)
+      - key: CORS_ORIGINS
+        sync: false
+      # LLM Provider (Ollama Cloud ou autre)
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: OLLAMA_BASE_URL
+        value: https://ollama.com
+      - key: OLLAMA_MODEL
+        value: gpt-oss:120b-cloud
+      - key: OLLAMA_EMBEDDING_MODEL
+        value: nomic-embed-text
+      # Meta WhatsApp Cloud API
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        generateValue: true
+      - key: META_APP_SECRET
+        sync: false
+      # Paiements Mobile Money (Wave, Orange, Moov)
+      - key: PAYMENT_MODE
+        value: simulation
+      - key: PAYMENT_PROVIDER
+        value: mock
+      # STT & TTS
+      - key: STT_PROVIDER
+        value: mock
+      - key: TTS_PROVIDER
+        value: mock
+      # Exécution automatique de l'init DB (création tables et extension vector)
+      - key: RUN_INIT_DB
+        value: "true"
+
+  # ---------------------------------------------------------
+  # 2. Frontend Dashboard (Angular 21 — Static Site)
+  # ---------------------------------------------------------
+  - type: static
+    name: maliagent-dashboard
+    rootDir: dashboard
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist/dashboard/browser
+    plan: free
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+# ---------------------------------------------------------
+# 3. Base de Données PostgreSQL avec pgvector
+# ---------------------------------------------------------
+databases:
+  - name: maliagent-db
+    databaseName: maliagent
+    user: maliagent
+    plan: free
+    region: frankfurt

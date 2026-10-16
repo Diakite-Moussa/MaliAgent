@@ -4,13 +4,17 @@ Section 14 du cahier des charges de la plateforme MaliAgent.
 """
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
+
+if TYPE_CHECKING:
+    from app.models.business import Business
+    from app.models.user import User
 
 
 class AuditLog(Base, UUIDPKMixin, TimestampMixin):
@@ -39,5 +43,9 @@ class AuditLog(Base, UUIDPKMixin, TimestampMixin):
     # Métadonnées structurées de l'action
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
+    actor_user: Mapped["User | None"] = relationship("User", foreign_keys=[actor_user_id], lazy="selectin")
+    business: Mapped["Business | None"] = relationship("Business", foreign_keys=[business_id], lazy="selectin")
+
     def __repr__(self) -> str:
         return f"<AuditLog {self.action} by={self.actor_user_id} on={self.resource_type}:{self.resource_id}>"
+

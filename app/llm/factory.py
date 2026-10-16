@@ -16,4 +16,5 @@ def get_llm_provider() -> LLMProvider:
         api_key=settings.ollama_api_key,
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
+        embedding_model=settings.ollama_embedding_model,
     )

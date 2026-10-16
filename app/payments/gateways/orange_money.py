@@ -69,14 +69,63 @@ class OrangeMoneyPaymentGateway(BasePaymentGateway):
             "Vérification d'API Orange Money réservée à la phase 2 de production."
         )
 
+    def verify_ipn_token(self, headers: dict) -> bool:
+        """Vérifie le token de sécurité ou signature IPN envoyé par Orange Money."""
+        if not self.webhook_secret:
+            return True
+        token = headers.get("x-orange-token") or headers.get("authorization") or ""
+        return self.webhook_secret in token
+
     async def process_webhook(self, payload: dict, headers: dict) -> PaymentWebhookResult:
         """
-        Traite la notification IPN envoyée par le serveur Orange Money.
-        TODO Phase 2 :
-        1. Vérifier la signature ou le secret IPN dans les headers
-        2. Parser le statut (SUCCESS, FAILED, EXPIRED)
-        3. Extraire provider_event_id pour l'idempotence
+        Traite la notification IPN envoyée par le serveur Orange Money Mali.
         """
-        raise NotImplementedError(
-            "Traitement des webhooks réels Orange Money réservé à la phase 2 de production."
+        if not self.client_id:
+            raise NotImplementedError(
+                "Traitement des webhooks réels Orange Money réservé à la phase 2 de production (ORANGE_CLIENT_ID requis)."
+            )
+
+        if not self.verify_ipn_token(headers):
+            return PaymentWebhookResult(
+                success=False,
+                handled=False,
+                transaction_reference="",
+                provider_event_id="",
+                status=PaymentStatus.FAILED,
+                error_message="Authentification IPN Orange Money invalide.",
+            )
+
+        tx_ref = payload.get("order_id") or payload.get("reference") or payload.get("notif_token", "")
+        status_raw = (payload.get("status") or "").upper()
+        event_id = payload.get("txnid") or payload.get("pay_token") or ""
+
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        status_mapping = {
+            "SUCCESS": PaymentStatus.SUCCESS,
+            "SUCCESSFULL": PaymentStatus.SUCCESS,
+            "FAILED": PaymentStatus.FAILED,
+            "EXPIRED": PaymentStatus.EXPIRED,
+            "CANCELLED": PaymentStatus.CANCELLED,
+            "INITIATED": PaymentStatus.PENDING_VALIDATION,
+        }
+        mapped_status = status_mapping.get(status_raw, PaymentStatus.PROCESSING)
+        amount_val = None
+        if "amount" in payload:
+            try:
+                amount_val = Decimal(str(payload["amount"]))
+            except Exception:
+                pass
+
+        return PaymentWebhookResult(
+            success=True,
+            handled=True,
+            transaction_reference=tx_ref,
+            provider_event_id=event_id,
+            provider_tx_id=payload.get("txnid"),
+            status=mapped_status,
+            paid_at=datetime.now(timezone.utc) if mapped_status == PaymentStatus.SUCCESS else None,
+            amount=amount_val,
+            raw_event=payload,
         )

@@ -3,9 +3,11 @@ Endpoints pour les statistiques et indicateurs clés (KPIs) du Dashboard.
 """
 
 from datetime import datetime, timezone
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -13,7 +15,13 @@ from app.core.deps import get_current_business_id
 from app.db.session import async_session
 from app.models import Business, Conversation, ConversationMessage, Customer, Order, OrderItem, OrderStatus, Product
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+
+
+class HandoffReplyIn(BaseModel):
+    message: str
 
 
 @router.get("/stats")
@@ -25,29 +33,71 @@ async def get_dashboard_stats(business_id: uuid.UUID = Depends(get_current_busin
         if not business:
             raise HTTPException(status_code=404, detail="Commerce introuvable")
 
+        # 1. Total clients
         stmt_cust = select(func.count(Customer.id)).where(Customer.business_id == business.id)
         total_customers = (await session.execute(stmt_cust)).scalar() or 0
 
-        stmt_orders = (
-            select(Order)
-            .options(selectinload(Order.items))
-            .where(Order.business_id == business.id)
-            .order_by(Order.created_at.desc())
+        # 2. Commandes du jour & en attente
+        start_of_today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        stmt_today_orders = select(func.count(Order.id)).where(
+            Order.business_id == business.id,
+            Order.created_at >= start_of_today,
         )
-        orders = (await session.execute(stmt_orders)).scalars().all()
+        today_orders_count = (await session.execute(stmt_today_orders)).scalar() or 0
 
-        now_date = datetime.now(timezone.utc).date()
-        today_orders = [o for o in orders if o.created_at and o.created_at.date() == now_date]
+        stmt_pending = select(func.count(Order.id)).where(
+            Order.business_id == business.id,
+            Order.status == OrderStatus.PENDING,
+        )
+        pending_orders_count = (await session.execute(stmt_pending)).scalar() or 0
 
-        today_orders_count = len(today_orders)
-        pending_orders_count = len([o for o in orders if o.status == OrderStatus.PENDING])
+        # 3. Chiffre d'affaires total et du jour (hors commandes annulées)
+        stmt_items_rev = (
+            select(func.coalesce(func.sum(OrderItem.unit_price_snapshot * OrderItem.quantity), 0))
+            .select_from(OrderItem)
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(Order.business_id == business.id, Order.status != OrderStatus.CANCELLED)
+        )
+        items_revenue = (await session.execute(stmt_items_rev)).scalar() or 0
 
-        total_revenue = sum((o.total_amount for o in orders if o.status != OrderStatus.CANCELLED), start=0)
-        today_revenue = sum((o.total_amount for o in today_orders if o.status != OrderStatus.CANCELLED), start=0)
+        stmt_delivery_rev = (
+            select(func.coalesce(func.sum(Order.delivery_fee), 0))
+            .where(Order.business_id == business.id, Order.status != OrderStatus.CANCELLED)
+        )
+        delivery_revenue = (await session.execute(stmt_delivery_rev)).scalar() or 0
+        total_revenue = items_revenue + delivery_revenue
 
-        stmt_prods = select(Product).where(Product.business_id == business.id)
-        products = (await session.execute(stmt_prods)).scalars().all()
+        stmt_today_items_rev = (
+            select(func.coalesce(func.sum(OrderItem.unit_price_snapshot * OrderItem.quantity), 0))
+            .select_from(OrderItem)
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(
+                Order.business_id == business.id,
+                Order.status != OrderStatus.CANCELLED,
+                Order.created_at >= start_of_today,
+            )
+        )
+        today_items_rev = (await session.execute(stmt_today_items_rev)).scalar() or 0
 
+        stmt_today_deliv_rev = (
+            select(func.coalesce(func.sum(Order.delivery_fee), 0))
+            .where(
+                Order.business_id == business.id,
+                Order.status != OrderStatus.CANCELLED,
+                Order.created_at >= start_of_today,
+            )
+        )
+        today_deliv_rev = (await session.execute(stmt_today_deliv_rev)).scalar() or 0
+        today_revenue = today_items_rev + today_deliv_rev
+
+        # 4. Alertes de stock bas
+        stmt_low_stock = (
+            select(Product)
+            .where(Product.business_id == business.id, Product.stock_quantity <= Product.low_stock_threshold)
+            .order_by(Product.stock_quantity.asc())
+        )
+        low_stock_prods = (await session.execute(stmt_low_stock)).scalars().all()
         low_stock_products = [
             {
                 "id": str(p.id),
@@ -55,20 +105,30 @@ async def get_dashboard_stats(business_id: uuid.UUID = Depends(get_current_busin
                 "category": p.category,
                 "price": int(p.price),
                 "stock_quantity": p.stock_quantity,
+                "low_stock_threshold": p.low_stock_threshold,
             }
-            for p in products
-            if p.stock_quantity <= 3
+            for p in low_stock_prods
         ]
 
+        # 5. Escalades humaines en attente
         stmt_handoffs_cnt = select(func.count(Conversation.id)).where(
             Conversation.business_id == business.id,
             Conversation.status == "needs_human",
         )
         pending_handoffs_count = (await session.execute(stmt_handoffs_cnt)).scalar() or 0
 
-        recent_orders = []
-        for o in orders[:5]:
-            recent_orders.append({
+        # 6. Commandes récentes (strictement limitées aux 5 dernières)
+        stmt_recent_orders = (
+            select(Order)
+            .options(selectinload(Order.items))
+            .where(Order.business_id == business.id)
+            .order_by(Order.created_at.desc())
+            .limit(5)
+        )
+        recent_orders_db = (await session.execute(stmt_recent_orders)).scalars().all()
+
+        recent_orders = [
+            {
                 "id": str(o.id),
                 "short_id": str(o.id)[:8].upper(),
                 "customer_id": str(o.customer_id),
@@ -78,7 +138,9 @@ async def get_dashboard_stats(business_id: uuid.UUID = Depends(get_current_busin
                 "delivery_fee": int(o.delivery_fee or 0),
                 "items_count": len(o.items),
                 "created_at": o.created_at.isoformat() if o.created_at else None,
-            })
+            }
+            for o in recent_orders_db
+        ]
 
         return {
             "business": {
@@ -132,7 +194,7 @@ async def list_handoff_conversations(business_id: uuid.UUID = Depends(get_curren
                     "content": m.content,
                     "created_at": m.created_at.isoformat() if m.created_at else None,
                 }
-                for m in (c.messages[-6:] if c.messages else [])
+                for m in (c.messages[-20:] if c.messages else [])
             ]
             result.append({
                 "id": str(c.id),
@@ -148,14 +210,78 @@ async def list_handoff_conversations(business_id: uuid.UUID = Depends(get_curren
         return {"handoffs": result, "total": len(result)}
 
 
+@router.post("/handoffs/{conversation_id}/reply")
+async def reply_handoff(
+    conversation_id: uuid.UUID,
+    payload: HandoffReplyIn,
+    business_id: uuid.UUID = Depends(get_current_business_id),
+):
+    """
+    Permet au commerçant d'envoyer un message WhatsApp direct au client depuis le dashboard.
+    Enregistre le message dans l'historique de la conversation.
+    """
+    msg_text = payload.message.strip()
+    if not msg_text:
+        raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
+
+    async with async_session() as session:
+        stmt = (
+            select(Conversation)
+            .options(selectinload(Conversation.customer))
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.business_id == business_id,
+            )
+        )
+        conv = (await session.execute(stmt)).scalar_one_or_none()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation introuvable pour cette boutique")
+
+        # Enregistrer le message de la boutique dans l'historique
+        new_msg = ConversationMessage(
+            conversation_id=conv.id,
+            role="assistant",
+            content=msg_text,
+        )
+        session.add(new_msg)
+        await session.commit()
+        await session.refresh(new_msg)
+
+        # Envoi en direct sur WhatsApp au client
+        phone = conv.customer.whatsapp_phone_number if conv.customer else None
+        if phone:
+            try:
+                from app.whatsapp.client import send_text_message
+
+                await send_text_message(to=phone, body=msg_text)
+                logger.info(f"Réponse commerçant WhatsApp envoyée à {phone}")
+            except Exception as e:
+                logger.warning(f"Impossible d'envoyer le message WhatsApp commerçant : {e}")
+
+        return {
+            "status": "sent",
+            "message_id": str(new_msg.id),
+            "content": new_msg.content,
+            "created_at": new_msg.created_at.isoformat() if new_msg.created_at else None,
+        }
+
+
 @router.post("/handoffs/{conversation_id}/resolve")
 async def resolve_handoff(
-    conversation_id: uuid.UUID, business_id: uuid.UUID = Depends(get_current_business_id)
+    conversation_id: uuid.UUID,
+    business_id: uuid.UUID = Depends(get_current_business_id),
 ):
+    """
+    Résout l'intervention humaine, réactive l'agent commercial IA et confirme la reprise au client sur WhatsApp.
+    """
     async with async_session() as session:
-        stmt = select(Conversation).where(
-            Conversation.id == conversation_id,
-            Conversation.business_id == business_id,
+        stmt = (
+            select(Conversation)
+            .options(selectinload(Conversation.customer))
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.business_id == business_id,
+            )
         )
         conv = (await session.execute(stmt)).scalar_one_or_none()
         if not conv:
@@ -170,4 +296,28 @@ async def resolve_handoff(
         )
         session.add(resolution_msg)
         await session.commit()
+
+        # Notifier courtoisement le client sur WhatsApp
+        phone = conv.customer.whatsapp_phone_number if conv.customer else None
+        if phone:
+            try:
+                from app.whatsapp.client import send_text_message
+
+                preferred_lang = getattr(conv.customer, "preferred_language", "fr")
+                if preferred_lang == "bm":
+                    close_msg = (
+                        "🙏 *I ni ce i ka munyuli la !*\n\n"
+                        "An ka dɛmɛbaga y'i ka kibaaru ɲɛnabɔ. "
+                        "I bɛ se ka to k'i ka yamaruya (commande) kɛ an fɛ yan sisan !"
+                    )
+                else:
+                    close_msg = (
+                        "🙏 *Merci pour votre échange avec notre conseiller !*\n\n"
+                        "Votre demande a bien été prise en charge. "
+                        "Je reste à votre entière disposition pour vos commandes et questions sur notre boutique !"
+                    )
+                await send_text_message(to=phone, body=close_msg)
+            except Exception as e:
+                logger.warning(f"Échec notification WhatsApp clôture handoff : {e}")
+
         return {"status": "success", "message": "Conversation résolue. L'agent IA est réactivé."}

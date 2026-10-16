@@ -45,15 +45,60 @@ export interface Order {
   };
 }
 
+export interface ProductCategory {
+  id: string;
+  business_id: string;
+  name: string;
+  description?: string | null;
+  product_count: number;
+  created_at?: string | null;
+}
+
+export interface ProductVariant {
+  id?: string;
+  name: string;
+  value: string;
+  label?: string;
+  price?: number | null;
+  stock_quantity: number;
+  sku?: string | null;
+  image_url?: string | null;
+}
+
 export interface Product {
   id: string;
   business_id: string;
   name: string;
   category: string;
+  category_id?: string | null;
   price: number;
   stock_quantity: number;
+  low_stock_threshold?: number;
   is_low_stock: boolean;
   is_out_of_stock: boolean;
+  image_url?: string | null;
+  has_variants?: boolean;
+  variants?: ProductVariant[];
+}
+
+export interface AgentConfiguration {
+  agent_name: string;
+  tone: 'chaleureux' | 'formel' | 'concis' | string;
+  default_language: 'fr' | 'bm' | string;
+  custom_rules: string | null;
+  welcome_message: string | null;
+  enabled: boolean;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  filename: string;
+  document_type: string;
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  error_message?: string | null;
+  uploaded_by_user_id?: string | null;
+  created_at?: string | null;
+  file_path?: string | null;
 }
 
 export interface PaymentItem {

@@ -41,4 +41,4 @@ def detect_language(text: str, default_lang: str = "fr") -> str:
     if bm_matches >= 1:
         return "bm"
 
-    return "fr"
+    return default_lang

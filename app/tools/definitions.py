@@ -22,11 +22,15 @@ TOOLS = [
     ),
     ToolDefinition(
         name="check_stock",
-        description="Vérifie le stock disponible pour un produit précis, par son nom exact.",
+        description="Vérifie le stock disponible pour un produit précis (et optionnellement pour une déclinaison : taille, couleur, capacité).",
         parameters={
             "type": "object",
             "properties": {
                 "product_name": {"type": "string", "description": "Nom exact du produit"},
+                "variant": {
+                    "type": "string",
+                    "description": "Déclinaison spécifique si demandée (ex: '128Go', 'XL', 'Noir')",
+                },
             },
             "required": ["product_name"],
         },
@@ -80,7 +84,7 @@ TOOLS = [
         name="create_order",
         description=(
             "Enregistre définitivement une commande dans le système après CONFIRMATION EXPLICITE "
-            "du client (suite à un récapitulatif détaillé contenant : articles, quantités, total "
+            "du client (suite à un récapitulatif détaillé contenant : articles, variantes, quantités, total "
             "et frais de livraison). Ne JAMAIS appeler ce tool sans l'accord clair du client."
         ),
         parameters={
@@ -95,6 +99,10 @@ TOOLS = [
                             "product_name": {
                                 "type": "string",
                                 "description": "Nom du produit commandé",
+                            },
+                            "variant": {
+                                "type": "string",
+                                "description": "Variante ou déclinaison choisie si le produit en possède (ex: '128Go', 'Noir', 'XL')",
                             },
                             "quantity": {
                                 "type": "integer",
@@ -264,6 +272,23 @@ TOOLS = [
                     "description": "Référence de la commande (#...). Optionnel.",
                 },
             },
+        },
+    ),
+    ToolDefinition(
+        name="search_knowledge_base",
+        description=(
+            "Recherche dans la base de connaissances de la boutique (FAQ, politique de retour, "
+            "garanties, horaires, conditions spécifiques) pour répondre à une question du client "
+            "qui n'est pas couverte par les autres tools (produits, commandes, livraison). "
+            "Utilise ce tool avant de dire que tu ne sais pas répondre à une question générale sur la boutique."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Question du client, reformulée si besoin"},
+                "query": {"type": "string", "description": "Sujet ou terme de recherche (synonyme de question)"},
+            },
+            "required": ["question"],
         },
     ),
 ]

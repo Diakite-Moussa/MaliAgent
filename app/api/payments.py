@@ -48,6 +48,7 @@ async def initiate_payment(
                 provider=body.provider,
                 customer_phone=body.customer_phone,
                 return_url=body.return_url,
+                force_new=body.force_new,
             )
             return PaymentInitiateOut(
                 payment_id=payment.id,
@@ -224,9 +225,23 @@ async def mock_checkout_page(
     if not payment:
         return HTMLResponse("<h2>Transaction introuvable</h2>", status_code=404)
 
-    is_wave = "wave" in payment.provider.lower()
-    provider_title = "Wave Mali 🌊" if is_wave else "Orange Money Mali 🍊"
-    provider_color = "#1DA1F2" if is_wave else "#FF7900"
+    p_lower = payment.provider.lower()
+    if "wave" in p_lower:
+        provider_title = "Wave Mali 🌊"
+        provider_color = "#1DA1F2"
+        provider_hint = "Validation instantanée via votre application Wave"
+    elif "orange" in p_lower:
+        provider_title = "Orange Money Mali 🍊"
+        provider_color = "#FF7900"
+        provider_hint = "Validation par code secret #144# ou invite Push USSD"
+    elif "moov" in p_lower or "malitel" in p_lower:
+        provider_title = "Moov Money Mali 🔵"
+        provider_color = "#005BAA"
+        provider_hint = "Validation par code secret *166# ou invite Push USSD"
+    else:
+        provider_title = "Mobile Money Mali 💳"
+        provider_color = "#10B981"
+        provider_hint = "Validation de transaction sécurisée"
 
     html_content = f"""<!DOCTYPE html>
 <html lang="fr">

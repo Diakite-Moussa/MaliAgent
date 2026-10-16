@@ -64,14 +64,80 @@ class WavePaymentGateway(BasePaymentGateway):
             "Vérification d'API Wave réservée à la phase 2 de production."
         )
 
+    @staticmethod
+    def verify_signature(raw_body: str | bytes, signature_header: str, secret: str) -> bool:
+        """
+        Vérifie l'en-tête 'Wave-Signature' de format : t=1492774577,v1=52571869e79ce...
+        selon la spécification officielle Wave Checkout.
+        """
+        import hashlib
+        import hmac
+
+        if not signature_header or not secret:
+            return False
+        try:
+            parts = dict(item.split("=", 1) for item in signature_header.split(",") if "=" in item)
+            timestamp = parts.get("t")
+            v1_signature = parts.get("v1")
+            if not timestamp or not v1_signature:
+                return False
+
+            if isinstance(raw_body, str):
+                raw_body = raw_body.encode("utf-8")
+            to_sign = f"{timestamp}.".encode("utf-8") + raw_body
+            expected_mac = hmac.new(secret.encode("utf-8"), to_sign, hashlib.sha256).hexdigest()
+            return hmac.compare_digest(expected_mac, v1_signature)
+        except Exception:
+            return False
+
     async def process_webhook(self, payload: dict, headers: dict) -> PaymentWebhookResult:
         """
-        Traite un webhook officiel envoyé par Wave.
-        TODO Phase 2 :
-        1. Vérifier le header 'Wave-Signature' via HMAC-SHA256 avec self.webhook_secret
-        2. Parser l'événement checkout.session.completed
-        3. Extraire provider_event_id = payload['id'] pour garantir l'idempotence
+        Traite un webhook officiel envoyé par les serveurs de Wave Mali.
         """
-        raise NotImplementedError(
-            "Traitement des webhooks réels Wave réservé à la phase 2 de production."
+        if not self.api_key:
+            raise NotImplementedError(
+                "Traitement des webhooks réels Wave réservé à la phase 2 de production (WAVE_API_KEY requise)."
+            )
+
+        sig_header = headers.get("wave-signature") or headers.get("Wave-Signature") or ""
+        raw_body = payload.get("_raw_body", "")
+        if self.webhook_secret and not self.verify_signature(raw_body, sig_header, self.webhook_secret):
+            return PaymentWebhookResult(
+                success=False,
+                handled=False,
+                transaction_reference="",
+                provider_event_id="",
+                status=PaymentStatus.FAILED,
+                error_message="Signature Wave invalide.",
+            )
+
+        event_type = payload.get("type", "")
+        data = payload.get("data", {})
+        tx_ref = data.get("client_reference", "")
+        event_id = payload.get("id", "")
+
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        if event_type == "checkout.session.completed":
+            amount_val = Decimal(str(data.get("amount", "0")))
+            return PaymentWebhookResult(
+                success=True,
+                handled=True,
+                transaction_reference=tx_ref,
+                provider_event_id=event_id,
+                provider_tx_id=data.get("id"),
+                status=PaymentStatus.SUCCESS,
+                paid_at=datetime.now(timezone.utc),
+                amount=amount_val,
+                raw_event=payload,
+            )
+
+        return PaymentWebhookResult(
+            success=True,
+            handled=False,
+            transaction_reference=tx_ref,
+            provider_event_id=event_id,
+            status=PaymentStatus.PROCESSING,
+            raw_event=payload,
         )

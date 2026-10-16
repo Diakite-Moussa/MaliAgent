@@ -6,12 +6,16 @@ Permet à l'agent de conserver le fil de la discussion avec chaque client WhatsA
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, BusinessScopedMixin, TimestampMixin, UUIDPKMixin
+
+if TYPE_CHECKING:
+    from app.models.customer import Customer
 
 
 class Conversation(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
@@ -24,6 +28,8 @@ class Conversation(Base, UUIDPKMixin, BusinessScopedMixin, TimestampMixin):
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="whatsapp")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")  # "active" | "needs_human" | "closed"
     handoff_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    customer: Mapped["Customer"] = relationship("Customer", back_populates="conversations", lazy="selectin")
 
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", lazy="selectin"

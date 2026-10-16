@@ -5,7 +5,15 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { AuthService } from '../../auth.service';
 import { DashboardStateService } from '../../services/dashboard-state.service';
-import { Order, Product, MerchantMission, HandoffConversation } from '../../models/dashboard.models';
+import {
+  Order,
+  Product,
+  ProductCategory,
+  ProductVariant,
+  MerchantMission,
+  HandoffConversation,
+  KnowledgeDocument,
+} from '../../models/dashboard.models';
 
 @Component({
   selector: 'app-merchant-view',
@@ -20,7 +28,7 @@ export class MerchantViewComponent implements OnInit {
   private router = inject(Router);
 
   // Navigation Commerçant
-  activeTab = signal<'overview' | 'orders' | 'products' | 'deliveries' | 'payments' | 'support'>('overview');
+  activeTab = signal<'overview' | 'orders' | 'products' | 'deliveries' | 'payments' | 'support' | 'agent'>('overview');
 
   // Filtres commandes
   orderStatusFilter = signal<string>('all');
@@ -28,6 +36,16 @@ export class MerchantViewComponent implements OnInit {
 
   // Filtres produits
   productSearchQuery = signal<string>('');
+  selectedCategoryFilter = signal<string>('all');
+  expandedProductIds = signal<Set<string>>(new Set<string>());
+
+  // Gestion des Catégories
+  showAddCategoryModal = signal<boolean>(false);
+  isSavingCategory = signal<boolean>(false);
+  newCategory = {
+    name: '',
+    description: '',
+  };
 
   // Filtres livraisons & flotte
   deliveryStatusFilter = signal<string>('all');
@@ -45,11 +63,32 @@ export class MerchantViewComponent implements OnInit {
 
   // Modale Nouveau Produit
   showAddProductModal = signal<boolean>(false);
+  isUploadingProductImage = signal<boolean>(false);
+  newProductHasVariants = signal<boolean>(false);
   newProduct = {
     name: '',
-    category: 'téléphone',
+    category_id: '',
+    category: 'Général',
     price: 0,
     stock_quantity: 1,
+    image_url: '',
+    variants: [] as ProductVariant[],
+  };
+
+  // Modale Modifier Produit
+  showEditProductModal = signal<boolean>(false);
+  isUploadingEditProductImage = signal<boolean>(false);
+  isSavingEditProduct = signal<boolean>(false);
+  editProductHasVariants = signal<boolean>(false);
+  editProduct = {
+    id: '',
+    name: '',
+    category_id: '',
+    category: 'Général',
+    price: 0,
+    stock_quantity: 0,
+    image_url: '',
+    variants: [] as ProductVariant[],
   };
 
   // Modale Attribution de Mission
@@ -93,14 +132,32 @@ export class MerchantViewComponent implements OnInit {
   readonly kpis = this.state.kpis;
   readonly orders = this.state.orders;
   readonly products = this.state.products;
+  readonly categories = this.state.categories;
   readonly lowStockProducts = this.state.lowStockProducts;
   readonly handoffs = this.state.handoffs;
   readonly payments = this.state.payments;
   readonly merchantMissions = this.state.merchantMissions;
   readonly merchantDrivers = this.state.merchantDrivers;
   readonly merchantPartners = this.state.merchantPartners;
+  readonly agentConfig = this.state.agentConfig;
+  readonly isSavingAgentConfig = this.state.isSavingAgentConfig;
+  readonly knowledgeDocuments = this.state.knowledgeDocuments;
   readonly backendConnected = this.state.backendConnected;
   readonly loading = this.state.loading;
+
+  // Base de Connaissances (RAG)
+  isUploadingKnowledge = signal<boolean>(false);
+  isDeletingKnowledgeId = signal<string | null>(null);
+
+  // Formulaire de configuration Agent IA
+  agentForm = {
+    agent_name: 'Assistant',
+    tone: 'chaleureux',
+    default_language: 'fr',
+    custom_rules: '',
+    welcome_message: '',
+    enabled: true,
+  };
 
   // Filtrage réactif des commandes
   filteredOrders = computed(() => {
@@ -126,11 +183,27 @@ export class MerchantViewComponent implements OnInit {
   filteredProducts = computed(() => {
     let list = this.products();
     const query = this.productSearchQuery().toLowerCase().trim();
+    const catFilter = this.selectedCategoryFilter();
+
+    if (catFilter !== 'all') {
+      list = list.filter(
+        (p) =>
+          (p.category_id && p.category_id === catFilter) ||
+          p.category.toLowerCase() === catFilter.toLowerCase()
+      );
+    }
+
     if (query) {
       list = list.filter(
         (p) =>
           p.name.toLowerCase().includes(query) ||
-          p.category.toLowerCase().includes(query)
+          p.category.toLowerCase().includes(query) ||
+          (p.variants &&
+            p.variants.some(
+              (v) =>
+                v.value.toLowerCase().includes(query) ||
+                v.name.toLowerCase().includes(query)
+            ))
       );
     }
     return list;
@@ -208,10 +281,12 @@ export class MerchantViewComponent implements OnInit {
 
   ngOnInit() {
     this.refreshAll();
+    setTimeout(() => this.initAgentForm(), 600);
   }
 
   refreshAll() {
     this.state.refreshMerchantAll();
+    setTimeout(() => this.initAgentForm(), 600);
   }
 
   loadOrders() {
@@ -303,21 +378,382 @@ export class MerchantViewComponent implements OnInit {
       });
   }
 
+  onProductImageSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+
+    if (file.size > 5 * 1024 * 1024) {
+      this.state.showToast("La taille de l'image ne doit pas dépasser 5 Mo");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    this.isUploadingProductImage.set(true);
+    this.http.post<{ image_url: string; filename: string }>(
+      `${this.state.apiUrl}/api/products/upload-image`,
+      formData
+    ).subscribe({
+      next: (res) => {
+        this.newProduct.image_url = res.image_url;
+        this.isUploadingProductImage.set(false);
+        this.state.showToast('✓ Photo du produit uploadée avec succès !');
+      },
+      error: (err) => {
+        this.isUploadingProductImage.set(false);
+        this.state.showToast(err.error?.detail || "Erreur lors de l'upload de l'image");
+      },
+    });
+  }
+
+  removeProductImage() {
+    this.newProduct.image_url = '';
+  }
+
+  // ================= GESTION CATÉGORIES & VARIANTES =================
+  toggleProductExpand(productId: string) {
+    const s = new Set(this.expandedProductIds());
+    if (s.has(productId)) {
+      s.delete(productId);
+    } else {
+      s.add(productId);
+    }
+    this.expandedProductIds.set(s);
+  }
+
+  isProductExpanded(productId: string): boolean {
+    return this.expandedProductIds().has(productId);
+  }
+
+  openAddCategoryModal() {
+    this.newCategory = { name: '', description: '' };
+    this.showAddCategoryModal.set(true);
+  }
+
+  submitCreateCategory() {
+    const name = this.newCategory.name.trim();
+    if (!name) {
+      this.state.showToast('Veuillez saisir un nom pour la catégorie');
+      return;
+    }
+    this.isSavingCategory.set(true);
+    this.http.post<ProductCategory>(`${this.state.apiUrl}/api/categories`, {
+      name,
+      description: this.newCategory.description.trim() || null,
+    }).subscribe({
+      next: (res) => {
+        this.isSavingCategory.set(false);
+        this.state.showToast(`✓ Catégorie "${res.name}" créée avec succès !`);
+        this.showAddCategoryModal.set(false);
+        this.state.loadCategories();
+      },
+      error: (err) => {
+        this.isSavingCategory.set(false);
+        this.state.showToast(err.error?.detail || "Erreur lors de la création de la catégorie");
+      },
+    });
+  }
+
+  addVariant(target: 'new' | 'edit') {
+    const newVar: ProductVariant = {
+      name: 'Option',
+      value: '',
+      price: null,
+      stock_quantity: 1,
+    };
+    if (target === 'new') {
+      this.newProduct.variants.push(newVar);
+    } else {
+      this.editProduct.variants.push(newVar);
+    }
+  }
+
+  removeVariant(target: 'new' | 'edit', index: number) {
+    if (target === 'new') {
+      this.newProduct.variants.splice(index, 1);
+    } else {
+      this.editProduct.variants.splice(index, 1);
+    }
+  }
+
+  quickAdjustVariantStock(product: Product, variant: ProductVariant, delta: number) {
+    if (!variant.id) return;
+    const newQty = Math.max(0, variant.stock_quantity + delta);
+    this.http
+      .patch(`${this.state.apiUrl}/api/products/${product.id}/variants/${variant.id}/stock`, {
+        stock_quantity: newQty,
+      })
+      .subscribe({
+        next: () => {
+          this.state.showToast(`Stock de ${product.name} (${variant.value}) : ${newQty}`);
+          this.state.loadProducts();
+          this.state.loadStats();
+        },
+        error: () => {
+          this.state.showToast("Erreur lors de l'ajustement du stock de la variante");
+        },
+      });
+  }
+
   submitAddProduct() {
     if (!this.newProduct.name || this.newProduct.price <= 0) {
       this.state.showToast('Veuillez renseigner le nom et un prix valide');
       return;
     }
-    this.http.post(`${this.state.apiUrl}/api/products`, this.newProduct).subscribe({
+    const payload: any = {
+      name: this.newProduct.name.trim(),
+      category: this.newProduct.category.trim(),
+      category_id: this.newProduct.category_id || null,
+      price: this.newProduct.price,
+      stock_quantity: this.newProduct.stock_quantity,
+      image_url: this.newProduct.image_url?.trim() || null,
+    };
+
+    if (this.newProductHasVariants() && this.newProduct.variants.length > 0) {
+      payload.variants = this.newProduct.variants
+        .map((v) => ({
+          name: v.name.trim() || 'Option',
+          value: v.value.trim(),
+          price: v.price && v.price > 0 ? v.price : null,
+          stock_quantity: v.stock_quantity || 0,
+          sku: v.sku?.trim() || null,
+        }))
+        .filter((v) => v.value.length > 0);
+    }
+
+    this.http.post(`${this.state.apiUrl}/api/products`, payload).subscribe({
       next: (created: any) => {
         this.state.showToast(`Produit ${created.name} ajouté au catalogue !`);
         this.showAddProductModal.set(false);
-        this.newProduct = { name: '', category: 'téléphone', price: 0, stock_quantity: 1 };
+        this.newProduct = {
+          name: '',
+          category_id: '',
+          category: 'Général',
+          price: 0,
+          stock_quantity: 1,
+          image_url: '',
+          variants: [],
+        };
+        this.newProductHasVariants.set(false);
         this.state.loadProducts();
+        this.state.loadCategories();
         this.state.loadStats();
       },
       error: (err) => {
         this.state.showToast(err.error?.detail || "Erreur lors de l'ajout du produit");
+      },
+    });
+  }
+
+  // ================= MÉTHODES ÉDITION PRODUIT =================
+  openEditProductModal(product: Product) {
+    const hasVars = (product.variants && product.variants.length > 0) || false;
+    this.editProductHasVariants.set(hasVars);
+    this.editProduct = {
+      id: product.id,
+      name: product.name,
+      category: product.category,
+      category_id: product.category_id || '',
+      price: product.price,
+      stock_quantity: product.stock_quantity,
+      image_url: product.image_url || '',
+      variants: product.variants ? product.variants.map((v) => ({ ...v })) : [],
+    };
+    this.showEditProductModal.set(true);
+  }
+
+  onEditProductImageSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+
+    if (file.size > 5 * 1024 * 1024) {
+      this.state.showToast("La taille de l'image ne doit pas dépasser 5 Mo");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    this.isUploadingEditProductImage.set(true);
+    this.http.post<{ image_url: string; filename: string }>(
+      `${this.state.apiUrl}/api/products/upload-image`,
+      formData
+    ).subscribe({
+      next: (res) => {
+        this.editProduct.image_url = res.image_url;
+        this.isUploadingEditProductImage.set(false);
+        this.state.showToast('✓ Photo du produit mise à jour !');
+      },
+      error: (err) => {
+        this.isUploadingEditProductImage.set(false);
+        this.state.showToast(err.error?.detail || "Erreur lors de l'upload de l'image");
+      },
+    });
+  }
+
+  removeEditProductImage() {
+    this.editProduct.image_url = '';
+  }
+
+  submitEditProduct() {
+    if (!this.editProduct.name || this.editProduct.price < 0) {
+      this.state.showToast('Veuillez renseigner un nom et un prix valide');
+      return;
+    }
+
+    this.isSavingEditProduct.set(true);
+    const payload: any = {
+      name: this.editProduct.name.trim(),
+      category: this.editProduct.category.trim(),
+      category_id: this.editProduct.category_id || null,
+      price: this.editProduct.price,
+      image_url: this.editProduct.image_url?.trim() || null,
+    };
+
+    if (this.editProductHasVariants()) {
+      payload.variants = this.editProduct.variants
+        .map((v) => ({
+          id: v.id || null,
+          name: v.name.trim() || 'Option',
+          value: v.value.trim(),
+          price: v.price && v.price > 0 ? v.price : null,
+          stock_quantity: v.stock_quantity || 0,
+          sku: v.sku?.trim() || null,
+        }))
+        .filter((v) => v.value.length > 0);
+    } else {
+      payload.variants = [];
+    }
+
+    this.http.patch(`${this.state.apiUrl}/api/products/${this.editProduct.id}`, payload).subscribe({
+      next: (updated: any) => {
+        this.isSavingEditProduct.set(false);
+        this.state.showToast(`✓ Produit "${updated.name}" modifié avec succès !`);
+        this.showEditProductModal.set(false);
+        this.state.loadProducts();
+        this.state.loadCategories();
+        this.state.loadStats();
+      },
+      error: (err) => {
+        this.isSavingEditProduct.set(false);
+        this.state.showToast(err.error?.detail || "Erreur lors de la modification du produit");
+      },
+    });
+  }
+
+  getProductImageUrl(url: string | null | undefined): string {
+    if (!url) return '';
+    const trimmed = url.trim();
+    if (trimmed.includes('/api/products/images/')) {
+      const filename = trimmed.split('/api/products/images/').pop();
+      return `${this.state.apiUrl}/api/products/images/${filename}`;
+    }
+    return trimmed;
+  }
+
+  // ================= MÉTHODES CONFIGURATION AGENT IA =================
+  initAgentForm() {
+    const cfg = this.agentConfig();
+    if (cfg) {
+      this.agentForm = {
+        agent_name: cfg.agent_name || 'Assistant',
+        tone: cfg.tone || 'chaleureux',
+        default_language: cfg.default_language || 'fr',
+        custom_rules: cfg.custom_rules || '',
+        welcome_message: cfg.welcome_message || '',
+        enabled: cfg.enabled !== undefined ? cfg.enabled : true,
+      };
+    }
+  }
+
+  loadAgentConfig() {
+    this.state.loadAgentConfig();
+    this.state.loadKnowledgeDocuments();
+    setTimeout(() => this.initAgentForm(), 300);
+  }
+
+  saveAgentConfig() {
+    const payload = {
+      agent_name: this.agentForm.agent_name.trim() || 'Assistant',
+      tone: this.agentForm.tone,
+      default_language: this.agentForm.default_language,
+      custom_rules: this.agentForm.custom_rules?.trim() || null,
+      welcome_message: this.agentForm.welcome_message?.trim() || null,
+      enabled: this.agentForm.enabled,
+    };
+    this.state.updateAgentConfig(payload);
+  }
+
+  toggleAgentEnabled() {
+    this.agentForm.enabled = !this.agentForm.enabled;
+    this.saveAgentConfig();
+  }
+
+  setTone(tone: string) {
+    this.agentForm.tone = tone;
+  }
+
+  setLanguage(lang: string) {
+    this.agentForm.default_language = lang;
+  }
+
+  // ================= MÉTHODES BASE DE CONNAISSANCES (RAG) =================
+  onKnowledgeFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+
+    const file = input.files[0];
+    const allowedExtensions = ['pdf', 'txt'];
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+
+    if (!allowedExtensions.includes(ext)) {
+      this.state.showToast('Format non supporté. Veuillez sélectionner un fichier PDF ou TXT.');
+      input.value = '';
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      this.state.showToast('Le fichier est trop volumineux (maximum 15 Mo).');
+      input.value = '';
+      return;
+    }
+
+    this.isUploadingKnowledge.set(true);
+    this.state.uploadKnowledgeDocument(file).subscribe({
+      next: (doc) => {
+        this.isUploadingKnowledge.set(false);
+        input.value = '';
+        this.state.showToast(`✓ Document « ${doc.filename} » indexé dans la base de connaissances !`);
+        this.state.loadKnowledgeDocuments();
+      },
+      error: (err) => {
+        this.isUploadingKnowledge.set(false);
+        input.value = '';
+        const msg = err.error?.detail || "Erreur lors de l'upload et de l'indexation du document";
+        this.state.showToast(msg);
+      },
+    });
+  }
+
+  deleteKnowledgeDocument(doc: KnowledgeDocument) {
+    if (!confirm(`Supprimer le document « ${doc.filename} » et ses données vectorielles de la base de connaissances ?`)) {
+      return;
+    }
+
+    this.isDeletingKnowledgeId.set(doc.id);
+    this.state.deleteKnowledgeDocument(doc.id).subscribe({
+      next: () => {
+        this.isDeletingKnowledgeId.set(null);
+        this.state.showToast(`✓ Document « ${doc.filename} » supprimé.`);
+        this.state.loadKnowledgeDocuments();
+      },
+      error: (err) => {
+        this.isDeletingKnowledgeId.set(null);
+        const msg = err.error?.detail || 'Erreur lors de la suppression du document';
+        this.state.showToast(msg);
       },
     });
   }
@@ -421,45 +857,81 @@ export class MerchantViewComponent implements OnInit {
     const order = this.selectedOrderForMission();
     if (!order) return;
 
-    const payload: any = {
-      order_id: order.id,
-      assignment_type: this.assignMissionForm.assignment_type,
-      pickup_address: this.assignMissionForm.pickup_address,
-      delivery_address: this.assignMissionForm.delivery_address,
-      customer_name: order.customer.name || 'Client WhatsApp',
-      customer_phone: order.customer.phone,
-      notes: this.assignMissionForm.notes,
-    };
-
     if (this.assignMissionForm.assignment_type === 'internal') {
       if (!this.assignMissionForm.driver_id) {
         this.state.showToast('Veuillez sélectionner un coursier interne');
         return;
       }
-      payload.driver_id = this.assignMissionForm.driver_id;
     } else {
       if (!this.assignMissionForm.partner_id) {
         this.state.showToast('Veuillez sélectionner un partenaire logistique');
         return;
       }
-      payload.partner_id = this.assignMissionForm.partner_id;
     }
 
+    // Vérifier s'il existe déjà une mission pour cette commande
+    const existingMission = this.merchantMissions().find((m) => m.order_id === order.id);
+
     this.isAssigningMission.set(true);
-    this.http.post(`${this.state.apiUrl}/api/delivery/missions`, payload).subscribe({
-      next: (res: any) => {
-        this.isAssigningMission.set(false);
-        this.showAssignMissionModal.set(false);
-        this.selectedOrderForMission.set(null);
-        this.state.showToast(`Mission #${res.id?.slice(0, 8)} créée et assignée avec succès ! (Code OTP: ${res.otp_code})`);
-        this.state.loadMerchantDeliveries();
-        this.state.loadOrders();
-      },
-      error: (err) => {
-        this.isAssigningMission.set(false);
-        this.state.showToast(err.error?.detail || "Erreur lors de l'assignation de la livraison");
-      },
-    });
+
+    if (existingMission) {
+      // Mission existante → PATCH /missions/{id}/assign pour réattribuer
+      const patchPayload: any = {
+        assignment_type: this.assignMissionForm.assignment_type,
+        notes: this.assignMissionForm.notes,
+      };
+      if (this.assignMissionForm.assignment_type === 'internal') {
+        patchPayload.driver_id = this.assignMissionForm.driver_id;
+      } else {
+        patchPayload.partner_id = this.assignMissionForm.partner_id;
+      }
+
+      this.http.patch(`${this.state.apiUrl}/api/delivery/missions/${existingMission.id}/assign`, patchPayload).subscribe({
+        next: (res: any) => {
+          this.isAssigningMission.set(false);
+          this.showAssignMissionModal.set(false);
+          this.selectedOrderForMission.set(null);
+          this.state.showToast(`✓ Mission réattribuée avec succès !`);
+          this.state.loadMerchantDeliveries();
+          this.state.loadOrders();
+        },
+        error: (err) => {
+          this.isAssigningMission.set(false);
+          this.state.showToast(err.error?.detail || "Erreur lors de la réattribution de la mission");
+        },
+      });
+    } else {
+      // Pas de mission existante → POST /missions pour en créer une nouvelle
+      const payload: any = {
+        order_id: order.id,
+        assignment_type: this.assignMissionForm.assignment_type,
+        pickup_address: this.assignMissionForm.pickup_address,
+        delivery_address: this.assignMissionForm.delivery_address,
+        customer_name: order.customer.name || 'Client WhatsApp',
+        customer_phone: order.customer.phone,
+        notes: this.assignMissionForm.notes,
+      };
+      if (this.assignMissionForm.assignment_type === 'internal') {
+        payload.driver_id = this.assignMissionForm.driver_id;
+      } else {
+        payload.partner_id = this.assignMissionForm.partner_id;
+      }
+
+      this.http.post(`${this.state.apiUrl}/api/delivery/missions`, payload).subscribe({
+        next: (res: any) => {
+          this.isAssigningMission.set(false);
+          this.showAssignMissionModal.set(false);
+          this.selectedOrderForMission.set(null);
+          this.state.showToast(`✓ Mission #${res.id?.slice(0, 8)} créée ! Code OTP: ${res.otp_code}`);
+          this.state.loadMerchantDeliveries();
+          this.state.loadOrders();
+        },
+        error: (err) => {
+          this.isAssigningMission.set(false);
+          this.state.showToast(err.error?.detail || "Erreur lors de la création de la mission");
+        },
+      });
+    }
   }
 
   openAddPartnerModal() {

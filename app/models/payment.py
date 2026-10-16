@@ -40,6 +40,7 @@ class PaymentProvider(str, enum.Enum):
     MOCK = "mock"
     WAVE = "wave"
     ORANGE_MONEY = "orange_money"
+    MOOV_MONEY = "moov_money"
     CASH_ON_DELIVERY = "cash_on_delivery"
 
 
